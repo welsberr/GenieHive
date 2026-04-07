@@ -1,0 +1,43 @@
+node:
+  host_id: "singlebox-llamacpp"
+  display_name: "SingleBox llama.cpp"
+  listen_host: "127.0.0.1"
+  listen_port: 8891
+  address: "127.0.0.1"
+  labels:
+    topology: "singlebox"
+    runtime: "llama.cpp"
+
+control_plane:
+  base_url: "http://127.0.0.1:8800"
+  node_api_key: "change-me-node-key"
+  heartbeat_interval_s: 5
+
+inventory:
+  model_roots:
+    - "/path/to/models"
+  cpu_threads: 24
+  ram_gb: 64
+  capabilities:
+    cpu: true
+    cuda: true
+
+managed_runtimes:
+  enabled: false
+
+services:
+  - service_id: "singlebox/chat/qwen3-8b"
+    kind: "chat"
+    endpoint: "http://127.0.0.1:18091"
+    runtime:
+      engine: "llama.cpp"
+      launcher: "external"
+    assets:
+      - asset_id: "qwen3-8b-q4_k_m"
+        loaded: true
+    state:
+      health: "healthy"
+      load_state: "loaded"
+      accept_requests: true
+    observed:
+      p50_latency_ms: 900

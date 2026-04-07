@@ -1,3 +1,60 @@
 # GenieHive
 
-GenieHive is a generative AI router, starting with presenting an OpenAI API-compatible endpoint for clients to interact with, while their requests are routed appropriately among one or more nodes that register running servers with the control host. From running multiple LLMs on a single host to doing that across a distributed cluster, GenieHive aims to make it easier to actually use local AI.
+GenieHive is a local-first control plane for heterogeneous generative AI services running across one or more hosts.
+
+V1 scope:
+
+- chat completions
+- embeddings
+- transcription
+
+Core goals:
+
+- register hosts and services
+- track health, inventory, and observed performance
+- expose a stable client-facing API
+- support direct model addressing and higher-level role addressing
+- route requests to healthy loaded services first
+
+Repository layout:
+
+- `docs/architecture.md`: system overview and v1 scope
+- `docs/roadmap.md`: current milestones and near-term priorities
+- `docs/schemas.md`: canonical data models
+- `docs/deployment.md`: intended deployment approach
+- `docs/demo.md`: first end-to-end control-plus-node demo flow
+- `docs/llm_demo.md`: detailed master/peer/client LLM demo runbook
+- `docs/reverse_proxy.md`: safer external exposure patterns
+- `configs/`: example control-plane, node, and role configs
+- `scripts/`: small launch and inspection helpers
+- `src/geniehive_control/`: control-plane package
+- `src/geniehive_node/`: node-agent package
+
+There is now a documented single-machine path as well as the cluster-oriented path, so GenieHive can be exercised as a useful local router even without multiple hosts.
+
+This repository is intended as the clean successor to narrower local gateway experiments. OpenAI-compatible routing remains important, but it is treated as one client facade within a broader cluster control-plane design.
+
+## Development
+
+Local development setup:
+
+```bash
+cd /home/netuser/bin/geniehive
+python -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
+```
+
+Common commands:
+
+```bash
+make test
+make smoke
+make health
+```
+
+Repository conventions:
+
+- local runtime state lives under `state/` and should not be committed
+- example configs under `configs/` should remain runnable
+- operator scripts under `scripts/` are part of the supported workflow

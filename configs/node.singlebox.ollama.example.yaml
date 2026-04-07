@@ -1,0 +1,58 @@
+node:
+  host_id: "singlebox-ollama"
+  display_name: "SingleBox Ollama"
+  listen_host: "127.0.0.1"
+  listen_port: 8891
+  address: "127.0.0.1"
+  labels:
+    topology: "singlebox"
+    runtime: "ollama"
+
+control_plane:
+  base_url: "http://127.0.0.1:8800"
+  node_api_key: "change-me-node-key"
+  heartbeat_interval_s: 5
+
+inventory:
+  model_roots: []
+  cpu_threads: 24
+  ram_gb: 64
+  capabilities:
+    cpu: true
+    cuda: false
+
+managed_runtimes:
+  enabled: false
+
+services:
+  - service_id: "singlebox/chat/qwen3"
+    kind: "chat"
+    endpoint: "http://127.0.0.1:11434"
+    runtime:
+      engine: "ollama"
+      launcher: "external"
+    assets:
+      - asset_id: "qwen3"
+        loaded: true
+    state:
+      health: "healthy"
+      load_state: "loaded"
+      accept_requests: true
+    observed:
+      p50_latency_ms: 900
+
+  - service_id: "singlebox/embeddings/nomic-embed-text"
+    kind: "embeddings"
+    endpoint: "http://127.0.0.1:11434"
+    runtime:
+      engine: "ollama"
+      launcher: "external"
+    assets:
+      - asset_id: "nomic-embed-text"
+        loaded: true
+    state:
+      health: "healthy"
+      load_state: "loaded"
+      accept_requests: true
+    observed:
+      p50_latency_ms: 150

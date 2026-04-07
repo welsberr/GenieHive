@@ -1,0 +1,22 @@
+roles:
+  - role_id: "mentor"
+    display_name: "Mentor"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Guide the user without taking over the task."
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral"]
+      min_context: 8192
+
+  - role_id: "embedder"
+    display_name: "Embedder"
+    operation: "embeddings"
+    modality: "text"
+    routing_policy:
+      require_loaded: true
+
+  - role_id: "transcriber"
+    display_name: "Transcriber"
+    operation: "transcription"
+    modality: "audio"

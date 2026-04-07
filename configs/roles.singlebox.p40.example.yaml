@@ -1,0 +1,33 @@
+roles:
+  - role_id: "mentor"
+    display_name: "Mentor"
+    description: "Primary high-quality reasoning/chat route"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Be concise, helpful, and technically accurate."
+    routing_policy:
+      preferred_families: ["qwen2.5-14b", "qwen2.5"]
+      require_loaded: true
+
+  - role_id: "general_assistant"
+    display_name: "General Assistant"
+    description: "Secondary fast chat route"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Answer clearly and directly."
+    routing_policy:
+      preferred_families: ["qwen3.5-9b", "qwen3.5"]
+      require_loaded: true
+
+  - role_id: "background_summarizer"
+    display_name: "Background Summarizer"
+    description: "Slow fallback route for low-priority work"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Summarize briefly and conservatively."
+    routing_policy:
+      preferred_families: ["rocket-3b", "rocket"]
+      require_loaded: true
