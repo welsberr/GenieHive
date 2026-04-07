@@ -53,6 +53,21 @@ make smoke
 make health
 ```
 
+Benchmark workflow:
+
+```bash
+PYTHONPATH=src python scripts/run_benchmark_workload.py \
+  --base-url http://127.0.0.1:8800 \
+  --api-key change-me-client-key \
+  --model general_assistant \
+  --workload chat.short_reasoning \
+  --output /tmp/geniehive-bench.json
+
+PYTHONPATH=src python scripts/ingest_benchmark_report.py /tmp/geniehive-bench.json \
+  --base-url http://127.0.0.1:8800 \
+  --api-key change-me-client-key
+```
+
 Repository conventions:
 
 - local runtime state lives under `state/` and should not be committed

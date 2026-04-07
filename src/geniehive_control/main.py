@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from .auth import require_client_auth, require_node_auth
 from .chat import ProxyError, proxy_chat_completion, proxy_embeddings
 from .config import ControlConfig, load_config
-from .models import HostHeartbeat, HostRegistration
+from .models import BenchmarkIngestRequest, HostHeartbeat, HostRegistration, RouteMatchRequest, RouteMatchResponse
 from .roles import load_role_catalog
 from .registry import Registry
 from .upstream import UpstreamClient, UpstreamError
@@ -105,6 +105,23 @@ def create_app(
     async def list_services(request: Request, _=Depends(require_client_auth)) -> dict:
         return {"object": "list", "data": request.app.state.registry.list_services()}
 
+    @app.get("/v1/cluster/benchmarks")
+    async def list_benchmarks(
+        request: Request,
+        service_id: str | None = None,
+        workload: str | None = None,
+        _=Depends(require_client_auth),
+    ) -> dict:
+        return {
+            "object": "list",
+            "data": request.app.state.registry.list_benchmark_samples(service_id=service_id, workload=workload),
+        }
+
+    @app.post("/v1/cluster/benchmarks")
+    async def ingest_benchmarks(payload: BenchmarkIngestRequest, request: Request, _=Depends(require_client_auth)) -> dict:
+        samples = request.app.state.registry.upsert_benchmark_samples(payload.samples)
+        return {"status": "ok", "count": len(payload.samples), "data": samples}
+
     @app.get("/v1/cluster/roles")
     async def list_roles(request: Request, _=Depends(require_client_auth)) -> dict:
         return {"object": "list", "data": request.app.state.registry.list_roles()}
@@ -120,6 +137,11 @@ def create_app(
         if resolved is None:
             return JSONResponse(status_code=404, content={"error": "no_route", "model": model, "kind": kind})
         return {"status": "ok", "resolution": resolved}
+
+    @app.post("/v1/cluster/routes/match")
+    async def match_routes(payload: RouteMatchRequest, request: Request, _=Depends(require_client_auth)) -> dict:
+        response = request.app.state.registry.match_routes(payload)
+        return RouteMatchResponse.model_validate(response).model_dump()
 
     return app
 

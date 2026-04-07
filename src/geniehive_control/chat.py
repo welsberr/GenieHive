@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .request_policy import apply_request_policy, effective_chat_request_policy, select_target_asset
 from .registry import Registry
 from .routing import choose_upstream_model_id
 from .upstream import UpstreamClient
@@ -26,7 +27,6 @@ def _strip_reasoning_fields(payload: Any) -> Any:
         cleaned[key] = _strip_reasoning_fields(value)
     return cleaned
 
-
 async def proxy_chat_completion(
     body: dict[str, Any],
     *,
@@ -45,7 +45,16 @@ async def proxy_chat_completion(
     if service is None:
         raise ProxyError(f"No healthy chat target available for '{requested_model}'.", status_code=503)
 
-    upstream_body = dict(body)
+    asset = select_target_asset(service, requested_model)
+    role = resolved.get("role")
+    combined_policy = effective_chat_request_policy(
+        requested_model=requested_model,
+        service=service,
+        role=role,
+        asset=asset,
+    )
+
+    upstream_body = apply_request_policy(dict(body), combined_policy)
     upstream_body["model"] = choose_upstream_model_id(requested_model, service)
     response = await upstream.chat_completions(service["endpoint"], upstream_body)
     return _strip_reasoning_fields(response)

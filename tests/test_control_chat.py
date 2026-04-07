@@ -158,6 +158,108 @@ def test_proxy_chat_completion_strips_reasoning_fields(tmp_path: Path) -> None:
     assert "reasoning" not in choice
 
 
+def test_proxy_chat_completion_applies_inferred_qwen_request_defaults(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path)
+
+    class _InspectingPoster:
+        async def post(self, url: str, *, json: dict, headers: dict[str, str] | None = None) -> _FakeResponse:
+            assert json["chat_template_kwargs"] == {"enable_thinking": False}
+            return _FakeResponse({"ok": True, "echo_model": json["model"]})
+
+    upstream = UpstreamClient(client=_InspectingPoster())
+
+    async def run() -> dict:
+        return await proxy_chat_completion(
+            {
+                "model": "mentor",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            registry=registry,
+            upstream=upstream,
+        )
+
+    result = asyncio.run(run())
+    assert result["echo_model"] == "qwen3-8b-q4km"
+
+
+def test_proxy_chat_completion_preserves_explicit_template_kwargs(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path)
+
+    class _InspectingPoster:
+        async def post(self, url: str, *, json: dict, headers: dict[str, str] | None = None) -> _FakeResponse:
+            assert json["chat_template_kwargs"] == {"enable_thinking": True, "foo": "bar"}
+            return _FakeResponse({"ok": True, "echo_model": json["model"]})
+
+    upstream = UpstreamClient(client=_InspectingPoster())
+
+    async def run() -> dict:
+        return await proxy_chat_completion(
+            {
+                "model": "mentor",
+                "messages": [{"role": "user", "content": "hello"}],
+                "chat_template_kwargs": {"enable_thinking": True, "foo": "bar"},
+            },
+            registry=registry,
+            upstream=upstream,
+        )
+
+    result = asyncio.run(run())
+    assert result["echo_model"] == "qwen3-8b-q4km"
+
+
+def test_proxy_chat_completion_applies_asset_request_policy(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/custom-model",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18091",
+                    assets=[
+                        {
+                            "asset_id": "custom-model-v1",
+                            "loaded": True,
+                            "request_policy": {
+                                "body_defaults": {
+                                    "temperature": 0.2,
+                                    "chat_template_kwargs": {"custom_flag": "yes"},
+                                }
+                            },
+                        }
+                    ],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 900},
+                )
+            ],
+        )
+    )
+
+    class _InspectingPoster:
+        async def post(self, url: str, *, json: dict, headers: dict[str, str] | None = None) -> _FakeResponse:
+            assert json["temperature"] == 0.2
+            assert json["chat_template_kwargs"] == {"custom_flag": "yes"}
+            return _FakeResponse({"ok": True, "echo_model": json["model"]})
+
+    upstream = UpstreamClient(client=_InspectingPoster())
+
+    async def run() -> dict:
+        return await proxy_chat_completion(
+            {
+                "model": "custom-model-v1",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            registry=registry,
+            upstream=upstream,
+        )
+
+    result = asyncio.run(run())
+    assert result["echo_model"] == "custom-model-v1"
+
+
 def test_proxy_chat_completion_fails_for_unknown_model(tmp_path: Path) -> None:
     registry = _build_registry(tmp_path)
     upstream = UpstreamClient(client=_FakePoster())

@@ -5,9 +5,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class RequestShapePolicy(BaseModel):
+    body_defaults: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str | None = None
+    system_prompt_position: Literal["prepend", "append", "replace"] = "prepend"
+
+
 class ServiceAsset(BaseModel):
     asset_id: str
     loaded: bool = False
+    request_policy: RequestShapePolicy = Field(default_factory=RequestShapePolicy)
 
 
 class ServiceRuntime(BaseModel):
@@ -66,6 +73,7 @@ class HostHeartbeat(BaseModel):
 class PromptPolicy(BaseModel):
     system_prompt: str | None = None
     user_template: str | None = None
+    request_policy: RequestShapePolicy = Field(default_factory=RequestShapePolicy)
 
 
 class RoutingPolicy(BaseModel):
@@ -88,3 +96,48 @@ class RoleProfile(BaseModel):
 
 class RoleCatalog(BaseModel):
     roles: list[RoleProfile] = Field(default_factory=list)
+
+
+class BenchmarkSample(BaseModel):
+    benchmark_id: str
+    service_id: str
+    asset_id: str | None = None
+    workload: str
+    observed_at: float
+    results: dict[str, Any] = Field(default_factory=dict)
+
+
+class BenchmarkIngestRequest(BaseModel):
+    samples: list[BenchmarkSample] = Field(default_factory=list)
+
+
+class RouteMatchRequest(BaseModel):
+    task: str | None = None
+    tasks: list[str] = Field(default_factory=list)
+    workload: str | None = None
+    workloads: list[str] = Field(default_factory=list)
+    kind: Literal["chat", "embeddings", "transcription"] | None = None
+    modality: str | None = None
+    include_direct_services: bool = True
+    limit: int = 10
+
+
+class RouteMatchCandidate(BaseModel):
+    candidate_type: Literal["role", "service"]
+    candidate_id: str
+    operation: Literal["chat", "embeddings", "transcription"]
+    score: float
+    reasons: list[str] = Field(default_factory=list)
+    signals: dict[str, Any] = Field(default_factory=dict)
+    role: dict[str, Any] | None = None
+    service: dict[str, Any] | None = None
+
+
+class RouteMatchResponse(BaseModel):
+    status: str = "ok"
+    task_count: int
+    tasks: list[str]
+    workloads: list[str] = Field(default_factory=list)
+    kind: Literal["chat", "embeddings", "transcription"] | None = None
+    modality: str | None = None
+    candidates: list[RouteMatchCandidate] = Field(default_factory=list)
