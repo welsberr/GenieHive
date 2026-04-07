@@ -1,0 +1,3 @@
+# GenieHive
+
+GenieHive is a generative AI router, starting with presenting an OpenAI API-compatible endpoint for clients to interact with, while their requests are routed appropriately among one or more nodes that register running servers with the control host. From running multiple LLMs on a single host to doing that across a distributed cluster, GenieHive aims to make it easier to actually use local AI.
