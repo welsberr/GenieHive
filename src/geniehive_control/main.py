@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import os
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .auth import require_client_auth, require_node_auth
-from .chat import ProxyError, proxy_chat_completion, proxy_embeddings
+from .chat import ProxyError, _prepare_chat_upstream, proxy_chat_completion, proxy_embeddings, proxy_transcription, stream_chat_completion
 from .config import ControlConfig, load_config
 from .models import BenchmarkIngestRequest, HostHeartbeat, HostRegistration, RouteMatchRequest, RouteMatchResponse
+from .probe import ServiceProber
 from .roles import load_role_catalog
 from .registry import Registry
 from .upstream import UpstreamClient, UpstreamError
@@ -22,13 +25,34 @@ def create_app(
 ) -> FastAPI:
     cfg_path = config_path or os.environ.get("GENIEHIVE_CONTROL_CONFIG")
     cfg = load_config(cfg_path) if cfg_path else ControlConfig()
-    registry = Registry(cfg.storage.sqlite_path)
+    registry = Registry(cfg.storage.sqlite_path, routing_strategy=cfg.routing.default_strategy)
     roles_path = cfg.roles_path or os.environ.get("GENIEHIVE_ROLES_CONFIG")
     if roles_path:
         registry.upsert_roles(load_role_catalog(roles_path).roles)
     upstream = upstream_client or UpstreamClient()
 
-    app = FastAPI(title="GenieHive Control", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        probe_task: asyncio.Task | None = None
+        prober: ServiceProber | None = None
+        stop_event = asyncio.Event()
+        if cfg.routing.probe_interval_s > 0:
+            prober = ServiceProber(registry, timeout_s=cfg.routing.probe_timeout_s)
+            probe_task = asyncio.create_task(
+                prober.probe_loop(stop_event, cfg.routing.probe_interval_s)
+            )
+        try:
+            yield
+        finally:
+            if probe_task is not None:
+                stop_event.set()
+                probe_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await probe_task
+            if prober is not None:
+                await prober.aclose()
+
+    app = FastAPI(title="GenieHive Control", version="0.1.0", lifespan=lifespan)
     app.state.cfg = cfg
     app.state.registry = registry
     app.state.upstream = upstream
@@ -64,12 +88,18 @@ def create_app(
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request, _=Depends(require_client_auth)):
         body = await request.json()
+        reg: Registry = request.app.state.registry
+        up: UpstreamClient = request.app.state.upstream
         try:
-            return await proxy_chat_completion(
-                body,
-                registry=request.app.state.registry,
-                upstream=request.app.state.upstream,
-            )
+            if body.get("stream"):
+                # Resolve route eagerly so ProxyError is raised before streaming starts.
+                service, upstream_body = _prepare_chat_upstream(body, registry=reg)
+                return StreamingResponse(
+                    stream_chat_completion(service, upstream_body, upstream=up),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+            return await proxy_chat_completion(body, registry=reg, upstream=up)
         except ProxyError as exc:
             return JSONResponse(
                 status_code=exc.status_code,
@@ -94,6 +124,39 @@ def create_app(
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "embeddings_proxy_error"}},
+            )
+        except UpstreamError as exc:
+            return JSONResponse(
+                status_code=exc.status_code or 502,
+                content={"error": {"message": str(exc), "type": "geniehive_error", "code": "upstream_error"}},
+            )
+
+    @app.post("/v1/audio/transcriptions")
+    async def audio_transcriptions(
+        request: Request,
+        file: UploadFile = File(...),
+        model: str = Form(...),
+        language: str | None = Form(None),
+        prompt: str | None = Form(None),
+        response_format: str | None = Form(None),
+        temperature: float | None = Form(None),
+        _=Depends(require_client_auth),
+    ):
+        try:
+            return await proxy_transcription(
+                model=model,
+                file=file,
+                language=language,
+                prompt=prompt,
+                response_format=response_format,
+                temperature=temperature,
+                registry=request.app.state.registry,
+                upstream=request.app.state.upstream,
+            )
+        except ProxyError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc), "type": "geniehive_error", "code": "transcription_proxy_error"}},
             )
         except UpstreamError as exc:
             return JSONResponse(

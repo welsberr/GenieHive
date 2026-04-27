@@ -1,6 +1,6 @@
 # GenieHive Roadmap
 
-Last updated: 2026-04-27
+Last updated: 2026-04-27 (P0–P2 complete + routing strategies + streaming + Ollama load state + observed metrics)
 
 ## What Is Complete
 
@@ -24,11 +24,17 @@ The v1 core is implemented and tested.
 - Per-asset and per-role policies, merged with role winning on prompts
 - Qwen3 / Qwen3.5 auto-detection with `enable_thinking: false` applied automatically
 
+**Client-facing proxy:**
+- `POST /v1/audio/transcriptions` — proxies multipart audio to upstream; uses a
+  real httpx client for multipart form-data (not the injectable `AsyncPoster` Protocol)
+
 **Route matching and scoring:**
 - `POST /v1/cluster/routes/match` — scored candidate list for role and service targets
 - Signals: text overlap, preferred family, runtime (loaded state, latency, throughput,
   queue depth), benchmark (workload overlap, quality score)
 - `GET /v1/cluster/routes/resolve` — quick single-model resolution
+- `fallback_roles` chain in `resolve_route()` — walks role fallbacks with cycle
+  protection; each fallback resolves using its own operation (not the primary's kind)
 
 **Benchmark infrastructure:**
 - Built-in workloads: `chat.short_reasoning`, `chat.concise_support`
@@ -43,116 +49,89 @@ The v1 core is implemented and tested.
 - Client API key (`X-Api-Key`) and node registration key (`X-GenieHive-Node-Key`)
 - Empty key lists disable auth for development
 
+**Active health probing (control plane):**
+- `ServiceProber` in `probe.py` probes each service's `GET /health` endpoint
+- Health divergences update the registry's `state_json` without touching other fields
+- Background `probe_loop` task launched at app startup when
+  `routing.probe_interval_s > 0` (default 0 = disabled, relies on node heartbeats)
+- Configurable via `routing.probe_interval_s` and `routing.probe_timeout_s`
+
+**Routing strategies — all three implemented:**
+- `routing.default_strategy` in config; `Registry(routing_strategy=...)` dispatches
+- `scored` (default): picks best-scoring service per role
+- `round_robin`: cycles through healthy candidates; in-memory counter, resets on restart
+- `least_loaded`: picks service with lowest `queue_depth + in_flight` from observed
+  metrics; falls back to latency as a secondary signal when load metrics are equal
+
+**Streaming chat completions:**
+- `UpstreamClient.chat_completions_stream()` — async generator, yields raw SSE bytes
+  using `httpx.AsyncClient.stream()`; raises `UpstreamError` before first yield on
+  non-2xx status
+- `_prepare_chat_upstream()` extracted from `proxy_chat_completion` — synchronous
+  routing/policy step so `ProxyError` can be caught before `StreamingResponse` is created
+- `stream_chat_completion()` — async generator wrapping `chat_completions_stream`,
+  applies `_strip_reasoning_from_sse_chunk()` to each SSE data line
+- Route handler detects `body.get("stream")`, resolves route eagerly, returns
+  `StreamingResponse` with `Cache-Control: no-cache, X-Accel-Buffering: no`
+
+**Upstream model discovery (node agent):**
+- `discover_ollama_assets()` — queries `/api/tags`; marks all as `loaded: False`
+  (available, not necessarily in VRAM)
+- `_get_ollama_ps_models()` — internal helper; queries `/api/ps`; returns raw model
+  list (with `size_in_vram` etc.) for reuse without extra HTTP requests
+- `query_ollama_ps()` — public wrapper; returns frozenset of VRAM-loaded model names
+- `discover_openai_models()` — queries `/v1/models`; marks all as `loaded: True`
+- `enrich_service_assets(service, *, protocol)` — for `"ollama"`: two-phase query
+  (tags + ps); updates `loaded` state of existing static assets as well as adding
+  new ones; stale `loaded: True` in config gets corrected to `False` if the model
+  isn't in `/api/ps`; populates `observed.loaded_model_count` and
+  `observed.vram_used_bytes` from `/api/ps` response
+- Per-service `discover_protocol: "ollama" | "openai" | null` config field
+- Heartbeat zips service dicts with config objects to pass protocol correctly
+- Separate httpx discovery client allocated only when any service opts in
+
+**`ServiceObserved` extended:**
+- `loaded_model_count: int | None` — number of models currently in VRAM (from Ollama `/api/ps`)
+- `vram_used_bytes: int | None` — total VRAM used across loaded models
+- Both exposed in `_runtime_signals` signals dict for route scoring visibility
+
 **Tests:**
 - Registry, chat proxy, node inventory, benchmark runner, full demo flow
-- All passing
+- ServiceProber probe_once, update_service_health, discover_ollama_assets,
+  enrich_service_assets, observed metrics population — all passing (47 total)
 
 ---
 
 ## Known Gaps and Issues
 
-These are confirmed gaps in the current implementation, not aspirational items.
+No confirmed gaps remain in the current implementation.  Improvement areas:
 
-### 1. Transcription endpoint not implemented
+### 1. Discovery covers Ollama and OpenAI-compatible; faster-whisper not covered
 
-`POST /v1/audio/transcriptions` is listed in the architecture and wired into
-`main.py`, but there is no upstream proxy handler for it. `upstream.py` has no
-`transcriptions()` method. The endpoint currently returns nothing useful.
+Transcription services (faster-whisper, WhisperX) don't expose `/api/tags` or
+`/v1/models`.  A `discover_protocol: "whisper"` variant could query
+`GET /inference/v1/models` or read a static manifest.
 
-### 2. Routing strategy field is ignored
+### 2. `architecture.md` could be tightened further
 
-`RoutingConfig.default_strategy` exists in `config.py` (default: `"loaded_first"`),
-but `resolve_route()` in `registry.py` does not read it. There is effectively only
-one strategy. The field is misleading.
-
-### 3. Role fallback chain is not implemented
-
-`RoutingPolicy.fallback_roles` is defined in `models.py` and appears in the schema
-docs, but `resolve_route()` never consults it. A role that fails to match any service
-fails outright rather than trying its fallbacks.
-
-### 4. `_benchmark_quality_score` can exceed 1.0 before clamping
-
-`pass_rate` and `quality_score` are taken as `max()`, then `tokens_per_sec` and
-`ttft_ms` are *added* on top. A service with `pass_rate=1.0`, fast tokens, and low
-TTFT accumulates a score of up to 1.6 before the final `min(1.0, quality)` clamp.
-This means the additive bonuses have no effect once pass_rate or quality_score is
-already high, which is probably not the intended behavior.
-
-### 5. Health is self-reported only
-
-Service health (`healthy` / `unhealthy`) comes entirely from node-reported state.
-The control plane does not probe upstream endpoints. A service can appear healthy
-while its endpoint is unreachable.
-
-### 6. No active model discovery from upstream services
-
-The node agent scans for `.gguf` files on disk and reads static service config.
-It does not query running Ollama or vLLM instances for their loaded model list.
-A freshly-pulled Ollama model will not appear until the node config is updated
-and the agent restarted.
-
-### 7. `docs/architecture.md` duplicates `GENIEWARREN_SPEC.md`
-
-`architecture.md` contains the repo-naming rationale, name alternatives, and
-implementation sequence list that are only meaningful in a design/proposal context.
-These are noise in a reference architecture document.
+Minor: some sections inherited from earlier drafts could be simplified now that
+the implementation is stable.
 
 ---
 
-## Immediate Next Work (Priority Order)
+## Next Work
 
-### P0 — Fix confirmed bugs
+1. **Live end-to-end demo** — run control + node against a real upstream (Ollama
+   or llama.cpp) and validate: chat via role, direct asset addressing, Ollama
+   dynamic discovery with correct load state, `least_loaded` routing with real
+   VRAM metrics, and streaming.
 
-1. **Remove the misleading `default_strategy` field** or implement a dispatch table
-   so the config field actually selects behavior. Simplest fix: delete the field and
-   the dead config surface until a second strategy is implemented.
+2. **Validate Codex-friendly `/v1/models` offload** — test `GET /v1/models` as
+   a programmatic service catalog for a Claude Code or Codex client selecting
+   a GenieHive-hosted model for lower-complexity subtasks.
 
-2. **Fix `_benchmark_quality_score`** so additive bonuses apply only when no
-   `pass_rate` / `quality_score` is available, or restructure as a weighted average
-   so the components don't stack additively.
-
-### P1 — Complete stated v1 scope
-
-3. **Implement transcription proxy** — add `upstream.transcriptions()` and wire
-   the handler in `chat.py` and `main.py`.
-
-4. **Implement role fallback chain** — when `resolve_route()` finds no matching
-   service for a role, walk `fallback_roles` in order before failing.
-
-### P2 — Close the most important self-reported-only gaps
-
-5. **Add active health probing** — the control plane should periodically probe
-   registered service endpoints (a lightweight `GET /health` or `GET /v1/models`
-   is sufficient) and update health state independently of node heartbeats.
-
-6. **Add upstream model discovery for Ollama** — query `GET /api/tags` (Ollama)
-   or `GET /v1/models` (OpenAI-compatible) from the node agent and merge loaded
-   model names into the service's asset list. This enables dynamic model tracking
-   without config restarts.
-
-### P3 — Documentation cleanup
-
-7. **Revise `architecture.md`** — remove the design-phase repo-naming rationale
-   and first-implementation-sequence list; replace with a description of the actual
-   running system (the four layers as implemented, data flow diagram if possible).
-
-8. **Update `roadmap.md`** — this file (done).
-
----
-
-## Near-Term Milestones (After P0–P3)
-
-- **Live LLM demo** — run control + node against a real upstream (Ollama or
-  llama.cpp) and document the end-to-end flow, including chat via role and
-  direct asset addressing
-- **Validate Codex-friendly `/v1/models` offload** — test `GET /v1/models` as
-  a programmatic service catalog for a Claude Code or Codex client selecting
-  a GenieHive-hosted model for lower-complexity subtasks
-- **Richer node metrics** — queue depth, in-flight count, and rolling performance
-  averages reported from node to control on every heartbeat
-- **Second routing strategy** — implement `round_robin` or `least_loaded` as a
-  second selectable strategy, then make `default_strategy` actually dispatch
+3. **`queue_depth` / `in_flight` from Ollama** — populate from `/api/ps` model
+   count or from a sidecar queue tracker; currently only set from static config.
 
 ---
 

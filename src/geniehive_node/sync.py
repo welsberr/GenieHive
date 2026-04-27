@@ -7,6 +7,7 @@ from typing import Protocol
 import httpx
 
 from .config import NodeConfig
+from .discovery import enrich_service_assets
 from .inventory import build_heartbeat_payload, build_registration_payload
 
 
@@ -22,6 +23,12 @@ class ControlPlaneClient:
         self._registered = False
         self._http = http_client or httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=30.0)
+        )
+        # Separate client used exclusively for upstream model discovery GETs.
+        # Only allocated when at least one service has discover_protocol set.
+        _needs_discovery = any(s.discover_protocol for s in cfg.services)
+        self._discovery_client: httpx.AsyncClient | None = (
+            httpx.AsyncClient(timeout=httpx.Timeout(5.0)) if _needs_discovery else None
         )
 
     @property
@@ -53,20 +60,24 @@ class ControlPlaneClient:
         if not self._registered:
             await self.register_once()
         url = str(self.cfg.control_plane.base_url).rstrip("/") + "/v1/nodes/heartbeat"
-        response = await self._http.post(
-            url,
-            json=build_heartbeat_payload(self.cfg),
-            headers=self._headers(),
-        )
+        payload = build_heartbeat_payload(self.cfg)
+        if self._discovery_client is not None:
+            reg_services = build_registration_payload(self.cfg).get("services", [])
+            enriched = [
+                await enrich_service_assets(
+                    svc_dict,
+                    protocol=svc_cfg.discover_protocol,
+                    client=self._discovery_client,
+                )
+                for svc_dict, svc_cfg in zip(reg_services, self.cfg.services)
+            ]
+            payload["services"] = enriched
+        response = await self._http.post(url, json=payload, headers=self._headers())
         if isinstance(response, httpx.Response):
             if response.status_code == 404:
                 self._registered = False
                 await self.register_once()
-                response = await self._http.post(
-                    url,
-                    json=build_heartbeat_payload(self.cfg),
-                    headers=self._headers(),
-                )
+                response = await self._http.post(url, json=payload, headers=self._headers())
             response.raise_for_status()
 
     async def heartbeat_loop(self, stop_event: asyncio.Event) -> None:
@@ -82,3 +93,5 @@ class ControlPlaneClient:
     async def aclose(self) -> None:
         if self._owns_client and isinstance(self._http, httpx.AsyncClient):
             await self._http.aclose()
+        if self._discovery_client is not None:
+            await self._discovery_client.aclose()

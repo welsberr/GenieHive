@@ -51,6 +51,11 @@ class NodeServiceConfig(BaseModel):
     assets: list[NodeServiceAssetConfig] = Field(default_factory=list)
     state: dict[str, object] = Field(default_factory=dict)
     observed: dict[str, object] = Field(default_factory=dict)
+    # Set to "ollama" to query GET /api/tags, or "openai" to query
+    # GET /v1/models, and merge discovered model names into the asset list
+    # reported to the control plane on each heartbeat.  None (default)
+    # disables discovery for this service.
+    discover_protocol: str | None = None
 
 
 class NodeConfig(BaseModel):

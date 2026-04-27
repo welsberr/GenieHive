@@ -22,6 +22,14 @@ class StorageConfig(BaseModel):
 
 class RoutingConfig(BaseModel):
     health_stale_after_s: float = 30.0
+    # "scored"      — pick best-scoring service per role (default)
+    # "round_robin" — cycle through healthy services in order
+    # "least_loaded" — prefer services with lowest queue_depth + in_flight
+    default_strategy: str = "scored"
+    # Set to a positive value (seconds) to enable active service health probing.
+    # 0.0 (default) disables probing; the control plane relies solely on node heartbeats.
+    probe_interval_s: float = 0.0
+    probe_timeout_s: float = 5.0
 
 
 class ControlConfig(BaseModel):

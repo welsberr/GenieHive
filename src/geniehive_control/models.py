@@ -34,6 +34,8 @@ class ServiceObserved(BaseModel):
     tokens_per_sec: float | None = None
     queue_depth: int | None = None
     in_flight: int | None = None
+    loaded_model_count: int | None = None
+    vram_used_bytes: int | None = None
 
 
 class RegisteredService(BaseModel):

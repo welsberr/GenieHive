@@ -1,7 +1,10 @@
+import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from geniehive_control.main import create_app
 from geniehive_control.models import BenchmarkSample, HostHeartbeat, HostRegistration, RegisteredService, RoleProfile, RouteMatchRequest
+from geniehive_control.probe import ServiceProber
 from geniehive_control.registry import Registry, _benchmark_quality_score
 
 
@@ -154,6 +157,7 @@ def test_control_app_exposes_expected_routes() -> None:
     assert "/v1/cluster/health" in paths
     assert "/v1/cluster/routes/resolve" in paths
     assert "/v1/cluster/routes/match" in paths
+    assert "/v1/audio/transcriptions" in paths
 
 
 def test_registry_can_rank_routes_for_task_statements(tmp_path: Path) -> None:
@@ -366,6 +370,216 @@ def test_registry_exposes_asset_request_policy_in_model_metadata(tmp_path: Path)
     asset = next(item for item in models if item["id"] == "custom-model-v1")
     assert asset["geniehive"]["effective_request_policy"]["body_defaults"]["temperature"] == 0.2
     assert asset["geniehive"]["effective_request_policy"]["body_defaults"]["chat_template_kwargs"]["custom_flag"] == "yes"
+
+
+def test_registry_fallback_roles_resolve_when_primary_has_no_service(tmp_path: Path) -> None:
+    db_path = tmp_path / "geniehive.sqlite3"
+    registry = Registry(db_path)
+
+    # Only a chat service exists — no transcription service.
+    # The primary role wants transcription (no candidates), so it falls back to
+    # the secondary role which routes to the available chat service.
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/rocket",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18093",
+                    assets=[{"asset_id": "rocket-3b", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 2000},
+                )
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="primary_transcriber",
+                display_name="Primary Transcriber",
+                operation="transcription",
+                modality="text",
+                routing_policy={"fallback_roles": ["chat_fallback"]},
+            ),
+            RoleProfile(
+                role_id="chat_fallback",
+                display_name="Chat Fallback",
+                operation="chat",
+                modality="text",
+                routing_policy={"preferred_families": ["rocket"]},
+            ),
+        ]
+    )
+
+    result = registry.resolve_route("primary_transcriber")
+    assert result is not None
+    assert result["match_type"] == "role"
+    assert result["role"]["role_id"] == "primary_transcriber"
+    assert result["service"] is not None
+    assert result["service"]["service_id"] == "atlas-01/chat/rocket"
+    assert result["fallback_via"] == "chat_fallback"
+
+
+def test_registry_fallback_roles_cycle_protection(tmp_path: Path) -> None:
+    db_path = tmp_path / "geniehive.sqlite3"
+    registry = Registry(db_path)
+
+    # No services — both roles have empty candidate lists.
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="role_a",
+                display_name="A",
+                operation="chat",
+                modality="text",
+                routing_policy={"fallback_roles": ["role_b"]},
+            ),
+            RoleProfile(
+                role_id="role_b",
+                display_name="B",
+                operation="chat",
+                modality="text",
+                routing_policy={"fallback_roles": ["role_a"]},
+            ),
+        ]
+    )
+
+    # Must not loop forever; must return service=None gracefully.
+    result = registry.resolve_route("role_a")
+    assert result is not None
+    assert result["match_type"] == "role"
+    assert result["service"] is None
+
+
+def test_registry_update_service_health_changes_only_health_field(tmp_path: Path) -> None:
+    db_path = tmp_path / "geniehive.sqlite3"
+    registry = Registry(db_path)
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/qwen3-8b",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18091",
+                    assets=[{"asset_id": "qwen3-8b", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 900},
+                )
+            ],
+        )
+    )
+
+    registry.update_service_health("atlas-01/chat/qwen3-8b", "unhealthy")
+    services = registry.list_services()
+    assert services[0]["state"]["health"] == "unhealthy"
+    # Other state fields must be preserved.
+    assert services[0]["state"]["load_state"] == "loaded"
+    assert services[0]["state"]["accept_requests"] is True
+
+    # Unknown service_id is a no-op (does not raise).
+    registry.update_service_health("nonexistent", "healthy")
+
+
+def test_service_prober_updates_health_on_probe(tmp_path: Path) -> None:
+    db_path = tmp_path / "geniehive.sqlite3"
+    registry = Registry(db_path)
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/qwen3-8b",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18091",
+                    assets=[{"asset_id": "qwen3-8b", "loaded": True}],
+                    state={"health": "healthy"},
+                    observed={},
+                )
+            ],
+        )
+    )
+
+    prober = ServiceProber(registry, timeout_s=5.0)
+
+    # Simulate a failed probe (connection error → unhealthy).
+    import httpx
+    async def run() -> None:
+        with patch.object(prober._client, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = httpx.ConnectError("refused")
+            results = await prober.probe_once()
+        assert results["atlas-01/chat/qwen3-8b"] == "unhealthy"
+        services = registry.list_services()
+        assert services[0]["state"]["health"] == "unhealthy"
+
+        # Simulate a successful probe → health restored.
+        with patch.object(prober._client, "get", new_callable=AsyncMock) as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_get.return_value = mock_response
+            results2 = await prober.probe_once()
+        assert results2["atlas-01/chat/qwen3-8b"] == "healthy"
+        services2 = registry.list_services()
+        assert services2[0]["state"]["health"] == "healthy"
+
+    asyncio.run(run())
+
+
+def test_service_prober_falls_back_to_v1_models_when_health_endpoint_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "geniehive.sqlite3"
+    registry = Registry(db_path)
+    registry.register_host(
+        HostRegistration(
+            host_id="vllm-01",
+            address="192.168.1.200",
+            services=[
+                RegisteredService(
+                    service_id="vllm-01/chat/mistral",
+                    host_id="vllm-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.200:8000",
+                    assets=[],
+                    state={"health": "unhealthy"},
+                    observed={},
+                )
+            ],
+        )
+    )
+
+    prober = ServiceProber(registry, timeout_s=5.0)
+
+    async def run() -> None:
+        import httpx
+        call_log: list[str] = []
+
+        async def fake_get(url: str) -> MagicMock:
+            call_log.append(url)
+            mock_response = MagicMock()
+            if url.endswith("/health"):
+                mock_response.status_code = 404
+            else:
+                mock_response.status_code = 200
+            return mock_response
+
+        with patch.object(prober._client, "get", side_effect=fake_get):
+            results = await prober.probe_once()
+
+        assert results["vllm-01/chat/mistral"] == "healthy"
+        # Both paths were tried.
+        assert any("/health" in u for u in call_log)
+        assert any("/v1/models" in u for u in call_log)
+        services = registry.list_services()
+        assert services[0]["state"]["health"] == "healthy"
+
+    asyncio.run(run())
 
 
 def test_benchmark_quality_score_stays_bounded_and_weighted() -> None:

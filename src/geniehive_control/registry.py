@@ -15,9 +15,12 @@ def _json_dumps(value: object) -> str:
 
 
 class Registry:
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, routing_strategy: str = "scored") -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._routing_strategy = routing_strategy
+        # Per-role round-robin counters (in-memory; reset on restart is intentional).
+        self._rr_counters: dict[str, int] = {}
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -206,6 +209,21 @@ class Registry:
                 )
         return self.list_roles()
 
+    def update_service_health(self, service_id: str, health: str) -> None:
+        """Overwrite the health field in a service's state_json without touching other fields."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT state_json FROM services WHERE service_id = ?", (service_id,)
+            ).fetchone()
+            if row is None:
+                return
+            state = json.loads(row["state_json"])
+            state["health"] = health
+            conn.execute(
+                "UPDATE services SET state_json = ? WHERE service_id = ?",
+                (_json_dumps(state), service_id),
+            )
+
     def get_role(self, role_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM roles WHERE role_id = ?", (role_id,)).fetchone()
@@ -351,7 +369,7 @@ class Registry:
             deduped[item["id"]] = item
         return [deduped[key] for key in sorted(deduped)]
 
-    def resolve_route(self, requested_model: str, *, kind: str | None = None) -> dict | None:
+    def resolve_route(self, requested_model: str, *, kind: str | None = None, _visited: set[str] | None = None) -> dict | None:
         direct = self._resolve_direct(requested_model, kind=kind)
         if direct is not None:
             return {"match_type": "direct", **direct}
@@ -369,6 +387,17 @@ class Registry:
             and service["state"].get("health") == "healthy"
         ]
         if not candidates:
+            visited: set[str] = _visited if _visited is not None else {requested_model}
+            for fb_role_id in role["routing_policy"].get("fallback_roles", []):
+                if fb_role_id in visited:
+                    continue
+                visited.add(fb_role_id)
+                # Let each fallback role resolve using its own operation — don't
+                # inherit matched_kind, so a fallback with a different kind can
+                # provide a service when the primary kind has none available.
+                fb_result = self.resolve_route(fb_role_id, _visited=visited)
+                if fb_result is not None and fb_result.get("service") is not None:
+                    return {"match_type": "role", "role": role, "service": fb_result["service"], "fallback_via": fb_role_id}
             return {"match_type": "role", "role": role, "service": None}
 
         preferred_families = [family.lower() for family in role["routing_policy"].get("preferred_families", [])]
@@ -388,7 +417,22 @@ class Registry:
             if loaded_candidates:
                 candidates = loaded_candidates
 
-        service = max(candidates, key=score)
+        if self._routing_strategy == "round_robin":
+            rr_key = requested_model
+            idx = self._rr_counters.get(rr_key, 0) % len(candidates)
+            self._rr_counters[rr_key] = idx + 1
+            service = candidates[idx]
+        elif self._routing_strategy == "least_loaded":
+            def load_key(svc: dict) -> tuple:
+                obs = svc.get("observed", {})
+                queue = obs.get("queue_depth") or 0
+                in_flight = obs.get("in_flight") or 0
+                # Prefer low load; use latency as secondary signal, then id for stability.
+                latency = obs.get("p50_latency_ms") or float("inf")
+                return (queue + in_flight, latency, svc["service_id"])
+            service = min(candidates, key=load_key)
+        else:
+            service = max(candidates, key=score)
         return {"match_type": "role", "role": role, "service": service}
 
     def match_routes(self, request: RouteMatchRequest) -> dict:
@@ -551,6 +595,7 @@ class Registry:
         latency = service["observed"].get("p50_latency_ms")
         tokens_per_sec = service["observed"].get("tokens_per_sec")
         queue_depth = service["observed"].get("queue_depth")
+        loaded_model_count = service["observed"].get("loaded_model_count")
 
         score = 0.0
         reasons: list[str] = []
@@ -582,6 +627,7 @@ class Registry:
             "p50_latency_ms": latency,
             "tokens_per_sec": tokens_per_sec,
             "queue_depth": queue_depth,
+            "loaded_model_count": loaded_model_count,
         }
 
     def _benchmark_signals(self, service: dict | None, tasks: list[str], workloads: list[str]) -> tuple[float, list[str], dict[str, object]]:
