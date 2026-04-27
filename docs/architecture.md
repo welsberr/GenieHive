@@ -1,74 +1,46 @@
 # GenieHive Architecture
 
-Status: proposed v1 architecture
-Drafted: 2026-04-05
-
-## Repo Name
-
-Chosen name: `GenieHive`
-
-Why this name:
-
-- suggestive: "genie" implies generative AI services, "hive" implies a cooperating cluster
-- accessible: easy to say, remember, and explain
-- whimsical enough to feel like a project name rather than a dry infrastructure label
-
-Tradeoff:
-
-- `GenieHive` is less search-distinct than `Geniewarren` because `hive` is a common product metaphor
+Last updated: 2026-04-27
 
 ## Mission
 
-GenieHive is a local-first control plane for heterogeneous generative AI services running across one or more hosts.
+GenieHive is a local-first control plane for heterogeneous generative AI services
+running across one or more hosts. It provides:
 
-It should:
+- Registration and health tracking for distributed AI services
+- A stable, OpenAI-compatible client-facing API
+- Role-based routing and scheduling over multiple services
+- Integrated benchmarking and performance-informed route scoring
 
-- register hosts and their available services
-- expose a stable client-facing API
-- track health, capacity, and observed performance
-- support direct model addressing and higher-level role addressing
-- route requests to healthy loaded services first
-- optionally coordinate loading or swapping when policy allows
-- remain practical for a small self-hosted deployment with two hosts
+It is not a plain OpenAI-compatible gateway. The control plane layer adds topology
+awareness, role abstraction, and signal-driven routing that a dumb proxy does not
+provide.
 
-## Non-Goals For V1
+---
 
-Out of scope initially:
+## Four Layers
 
-- peer-to-peer consensus
-- autonomous global model swapping across many nodes
-- full WAN zero-trust platform engineering
-- image and TTS generation orchestration
-- distributed vector database management
-- billing or multi-tenant quota accounting
+```
+┌─────────────────────────────────────────────┐
+│  Client Facades                              │
+│  OpenAI-compatible completions + embeddings  │
+│  Operator inspection API                     │
+├─────────────────────────────────────────────┤
+│  Control API                                 │
+│  Registry · Role catalog · Route resolution  │
+│  Scheduling · Benchmark store                │
+├─────────────────────────────────────────────┤
+│  Node Agent(s)                               │
+│  Host discovery · Service enumeration        │
+│  Telemetry reporting · Heartbeat             │
+├─────────────────────────────────────────────┤
+│  Provider Adapters                           │
+│  OpenAI-compatible chat / embeddings         │
+│  Transcription (partial)                     │
+└─────────────────────────────────────────────┘
+```
 
-## Architectural Position
-
-GenieHive is not just an OpenAI-compatible gateway.
-
-It is a control plane with these layers:
-
-1. Control API
-   - authoritative registry
-   - routing and scheduling
-   - role catalog
-   - operator inspection
-
-2. Node Agent
-   - host discovery
-   - service discovery
-   - telemetry reporting
-   - optional local process management
-
-3. Provider Adapters
-   - OpenAI-compatible chat backends
-   - OpenAI-compatible embedding backends
-   - transcription backends
-   - future adapters for image and speech synthesis
-
-4. Client Facades
-   - OpenAI-compatible facade for completions and embeddings
-   - operator API for topology, health, and inventory
+---
 
 ## Core Concepts
 
@@ -78,117 +50,165 @@ A physical or virtual machine participating in the cluster.
 
 ### Service
 
-A concrete callable capability on a host. Examples:
-
-- chat completion endpoint
-- embedding endpoint
-- transcription endpoint
+A concrete callable capability on a host: a chat endpoint, an embeddings endpoint,
+or a transcription endpoint. A host typically exposes multiple services.
 
 ### Asset
 
-A model weight, model name, application, or runtime target that a service can serve.
+A model weight, model name, or runtime target that a service can serve. Assets carry
+optional `request_policy` fields that adjust how requests are shaped before forwarding.
 
 ### Role
 
-A reusable task profile that describes how requests should be fulfilled. A role is policy, not a concrete model.
+A reusable task profile that describes *how* requests should be fulfilled, not *which*
+model fills them. A role has a prompt policy (system prompt injection, body defaults)
+and a routing policy (preferred model families, minimum context size, loaded-first
+preference). The same role can route to different services as cluster state changes.
 
 ### Route Resolution
 
-Request handling order:
+1. If `model` matches a loaded, healthy asset or service alias → route directly.
+2. If `model` matches a known role → score eligible services and route to the best.
+3. Otherwise → fail with a clear 404.
 
-1. If the requested `model` matches a currently loaded and healthy concrete asset or service alias, route directly.
-2. Otherwise, if the requested `model` matches a known role, resolve the role to the best eligible service.
-3. Otherwise, fail clearly.
+---
 
-## V1 Capability Scope
+## Data Flow: Chat Completion
 
-V1 supports only:
+```
+Client POST /v1/chat/completions
+  │
+  ▼
+resolve_route(model, kind="chat")
+  ├─ direct: asset_id or service alias match
+  └─ role: filter by kind/health → score by runtime + benchmark signals
+  │
+  ▼
+apply_request_policy(request, asset, role)
+  ├─ deep-merge body_defaults
+  ├─ apply system prompt (prepend / append / replace)
+  └─ auto-infer Qwen3 template kwargs if needed
+  │
+  ▼
+UpstreamClient.chat_completions(endpoint, modified_request)
+  │
+  ▼
+_strip_reasoning_fields(response)  ← removes reasoning_content / reasoning
+  │
+  ▼
+Response to client
+```
 
-- chat completions
-- embeddings
-- transcription
+---
+
+## Scoring
+
+Route scoring combines three signal families:
+
+| Signal family  | Weight (role) | Weight (service) |
+|----------------|---------------|-----------------|
+| Text overlap   | 30%           | 20%             |
+| Runtime        | 30%           | 45%             |
+| Benchmark      | 25%           | 35%             |
+| Family pref.   | 15%           | —               |
+
+**Runtime signals** (from last heartbeat):
+- Loaded state: +0.35
+- Latency bands: p50 <500 ms +0.30, <1500 ms +0.20, <3000 ms +0.10, else +0.05
+- Throughput: ≥40 tok/s +0.20, ≥20 +0.10
+- Queue depth: penalty −0.20 if ≥5, −0.10 if ≥2
+
+**Benchmark signals** (from ingested workload runs):
+- Workload overlap score (Jaccard-style token overlap)
+- Quality score from results: `0.45 * overlap + 0.55 * quality`
+
+---
 
 ## Topology
 
-Recommended initial topology:
+**Minimum viable (single machine):**
+```
+control plane + node agent + model server
+all on 127.0.0.1, different ports
+```
 
-- 1 control plane
-- 2 node agents
-- 1 or more clients
-- LAN-first deployment
-- API key auth in v1
-- VPN or mTLS in v1.5
+**Recommended (small cluster):**
+```
+1 control plane host
+2+ node-agent hosts, each with 1+ model servers
+1+ clients on LAN
+```
 
-## API Families
+**Auth:**
+- Client requests: `X-Api-Key` header
+- Node registration/heartbeat: `X-GenieHive-Node-Key` header
+- Empty key lists disable auth (development only)
+- mTLS between control and nodes planned for v1.5
+
+---
+
+## State Store
+
+SQLite. Schema:
+
+| Table               | Content                                   |
+|---------------------|-------------------------------------------|
+| `hosts`             | Host registration, resources, labels      |
+| `services`          | Service config, runtime, assets, observed |
+| `roles`             | Role catalog                              |
+| `benchmark_samples` | Workload results per service              |
+
+Default path: `state/geniehive.sqlite3`
+
+---
+
+## API Reference Summary
 
 ### Client API
-
-- `GET /v1/models`
-- `POST /v1/chat/completions`
-- `POST /v1/embeddings`
-- `POST /v1/audio/transcriptions`
-
-`GET /v1/models` should expose enough metadata for programmatic clients to make routing decisions about what GenieHive can handle cheaply, especially for lower-complexity offloaded work. That metadata should include direct assets, service-backed aliases, role aliases, operation kind, health, loaded status, and observed performance hints.
+| Endpoint                        | Status        |
+|---------------------------------|---------------|
+| `GET /v1/models`                | Implemented   |
+| `POST /v1/chat/completions`     | Implemented   |
+| `POST /v1/embeddings`           | Implemented   |
+| `POST /v1/audio/transcriptions` | Stub only     |
 
 ### Operator API
-
-- `GET /v1/cluster/hosts`
-- `GET /v1/cluster/services`
-- `GET /v1/cluster/roles`
-- `GET /v1/cluster/health`
-- `GET /v1/cluster/routes/resolve?model=...`
+| Endpoint                           | Status      |
+|------------------------------------|-------------|
+| `GET /v1/cluster/hosts`            | Implemented |
+| `GET /v1/cluster/services`         | Implemented |
+| `GET /v1/cluster/roles`            | Implemented |
+| `GET /v1/cluster/benchmarks`       | Implemented |
+| `GET /v1/cluster/health`           | Implemented |
+| `GET /v1/cluster/routes/resolve`   | Implemented |
+| `POST /v1/cluster/routes/match`    | Implemented |
 
 ### Node API
+| Endpoint                     | Status      |
+|------------------------------|-------------|
+| `POST /v1/nodes/register`    | Implemented |
+| `POST /v1/nodes/heartbeat`   | Implemented |
+| `GET /v1/node/inventory`     | Implemented |
+| `GET /v1/node/registration`  | Implemented |
 
-- `POST /v1/nodes/register`
-- `POST /v1/nodes/heartbeat`
-- `GET /v1/node/inventory`
-- `POST /v1/node/services/refresh`
+---
 
-## Data Store
+## Supported Upstream Backends
 
-V1 should use SQLite for durable state.
+Any OpenAI-compatible HTTP server. Tested configurations:
 
-## Routing Rules
+- **Ollama** — chat and embeddings
+- **llama.cpp** (server mode) — chat and embeddings
+- **llamafile** — chat
+- **vLLM** — chat and embeddings
 
-### Direct Model Resolution
+---
 
-If a request names a concrete asset alias or service alias:
+## Non-Goals for V1
 
-- prefer loaded and healthy services
-- choose the lowest-cost healthy target if multiple matches exist
-- fail clearly if all matches are unhealthy
-
-### Role Resolution
-
-If direct resolution fails, treat the requested name as a role.
-
-Role resolution should filter by:
-
-- operation kind
-- modality
-- health
-- auth and exposure compatibility
-- minimum context or memory requirements
-- preferred model families
-
-Then rank by:
-
-- already loaded
-- recent health
-- expected latency
-- queue pressure
-- operator priority
-
-## First Implementation Sequence
-
-1. Create the repo skeleton and docs.
-2. Implement SQLite-backed registry models.
-3. Implement node registration and heartbeat.
-4. Implement operator inspection endpoints.
-5. Implement client-facing chat routing.
-6. Add embeddings routing.
-7. Add transcription routing.
-8. Add truthful readiness and health reporting.
-9. Add role catalog and role-based resolution.
-10. Add optional managed local runtime support.
+- Peer-to-peer consensus
+- Autonomous global model swapping
+- WAN zero-trust networking
+- Image and TTS generation
+- Distributed vector databases
+- Billing or multi-tenant quotas
