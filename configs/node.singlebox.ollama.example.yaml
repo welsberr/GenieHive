@@ -31,6 +31,11 @@ services:
     runtime:
       engine: "ollama"
       launcher: "external"
+    # discover_protocol: "ollama" queries GET /api/tags and GET /api/ps on each heartbeat.
+    # Assets listed here serve as a static baseline; discovered models are merged in and
+    # their loaded state is corrected from /api/ps (VRAM-resident = loaded: true).
+    # loaded_model_count and vram_used_bytes are populated in observed from /api/ps.
+    discover_protocol: "ollama"
     assets:
       - asset_id: "qwen3"
         loaded: true
@@ -47,6 +52,7 @@ services:
     runtime:
       engine: "ollama"
       launcher: "external"
+    discover_protocol: "ollama"
     assets:
       - asset_id: "nomic-embed-text"
         loaded: true

@@ -8,24 +8,127 @@ This runbook covers the first practical GenieHive LLM demo with three roles:
 
 ## Current Readiness
 
-GenieHive is ready for a first live chat demo now.
+GenieHive v1 is fully implemented and ready for live demo.
 
-What works in GenieHive already:
+What works:
 
-- node registration
-- heartbeat
-- role-aware route resolution
-- `GET /v1/models`
-- `POST /v1/chat/completions`
+- Node registration and heartbeat with auto-re-registration on 404
+- Role-aware route resolution with `fallback_roles` chain and cycle protection
+- Three routing strategies: `scored` (default), `round_robin`, `least_loaded`
+- `GET /v1/models` — OpenAI-compatible catalog with rich GenieHive metadata
+- `POST /v1/chat/completions` — non-streaming and streaming (`stream: true`)
 - `POST /v1/embeddings`
+- `POST /v1/audio/transcriptions` — multipart audio proxy
+- Active health probing (`routing.probe_interval_s` in control config)
+- Ollama dynamic model discovery: `discover_protocol: "ollama"` in node config
+  queries `/api/tags` and `/api/ps` each heartbeat; corrects loaded state and
+  populates `observed.loaded_model_count` and `observed.vram_used_bytes`
+- OpenAI-compatible discovery: `discover_protocol: "openai"` queries `/v1/models`
+- Reasoning-field stripping (`reasoning_content`, `reasoning`) from both
+  non-streaming and streaming responses
+- Request policy: body defaults, overrides, system prompt injection per asset or role
+- Qwen3/Qwen3.5 auto-detection with `enable_thinking: false` applied automatically
 
-What GenieHive does not do yet:
+GenieHive does not launch upstream LLM servers for you. Treat it as a
+metadata-rich router over already-running local servers.
 
-- launch upstream LLM servers for you automatically
-- provide `POST /v1/audio/transcriptions`
-- maintain advanced benchmark history or queue-aware scheduling
+## Smoke Test
 
-For the first demo, treat GenieHive as a metadata-rich router over already-running local servers.
+After bringing up control + node + upstream, run:
+
+```bash
+python scripts/smoke_test.py \
+  --base-url http://127.0.0.1:8800 \
+  --api-key change-me-client-key
+```
+
+This validates in sequence: health, cluster state, model catalog, route
+resolution, non-streaming chat (role and direct asset), streaming chat,
+embeddings, Ollama discovery metrics, and reasoning-field stripping. Each
+check reports PASS / FAIL / SKIP with a short explanation.
+
+Optional flags:
+
+```bash
+python scripts/smoke_test.py \
+  --base-url http://127.0.0.1:8800 \
+  --api-key change-me-client-key \
+  --chat-role mentor \
+  --chat-asset qwen3 \
+  --embed-asset nomic-embed-text
+```
+
+## New Capabilities Since Initial Demo
+
+### Streaming chat
+
+Add `"stream": true` to any chat request. GenieHive returns a standard
+`text/event-stream` response with `Cache-Control: no-cache` and
+`X-Accel-Buffering: no` headers set for nginx/proxy compatibility:
+
+```bash
+curl -sS http://127.0.0.1:8800/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'X-Api-Key: change-me-client-key' \
+  -d '{
+    "model": "mentor",
+    "messages": [{"role":"user","content":"Count to five."}],
+    "stream": true
+  }'
+```
+
+Reasoning fields (`reasoning_content`, `reasoning`) are stripped from every
+SSE chunk before forwarding, just as they are for non-streaming responses.
+
+### Routing strategy
+
+Set `routing.default_strategy` in your control config:
+
+```yaml
+routing:
+  default_strategy: "least_loaded"   # scored | round_robin | least_loaded
+```
+
+`least_loaded` picks the service with the lowest `queue_depth + in_flight`.
+When Ollama discovery is enabled, `loaded_model_count` and `vram_used_bytes`
+are available in `observed` and visible via `GET /v1/cluster/services`.
+
+### Ollama dynamic model discovery
+
+Add `discover_protocol: "ollama"` to any Ollama-backed service in your node
+config. On each heartbeat the node queries `/api/tags` (available models) and
+`/api/ps` (VRAM-loaded models) and merges the results into the service's asset
+list. Stale `loaded: true` entries in static config are corrected automatically.
+
+```yaml
+services:
+  - service_id: "singlebox/chat/qwen3"
+    kind: "chat"
+    endpoint: "http://127.0.0.1:11434"
+    discover_protocol: "ollama"
+    assets:
+      - asset_id: "qwen3"   # static baseline; enriched each heartbeat
+        loaded: true
+```
+
+After the first enriched heartbeat, `GET /v1/cluster/services` will show
+`observed.loaded_model_count` and `observed.vram_used_bytes` for that service.
+
+### Role catalogs
+
+Five role catalog files are now included under `configs/`:
+
+| File | Framework | Roles |
+|---|---|---|
+| `roles.surgical-team.example.yaml` | Brooks/Mills surgical team | 9 (`surg_` prefix) |
+| `roles.belbin.example.yaml` | Belbin team roles | 9 (`belbin_` prefix) |
+| `roles.sixhats.example.yaml` | De Bono Six Thinking Hats | 6 (`sixhats_` prefix) |
+| `roles.disney.example.yaml` | Disney creative strategy | 3 (`disney_` prefix) |
+| `roles.xp.example.yaml` | XP team roles | 5 (`xp_` prefix) |
+
+Point `roles_path` in your control config at any of these files to load that
+catalog. Multiple catalogs can be merged by listing them in sequence — or
+concatenate the `roles:` blocks manually into a single file.
 
 ## Topologies
 
