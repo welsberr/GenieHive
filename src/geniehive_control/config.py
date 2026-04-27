@@ -21,7 +21,6 @@ class StorageConfig(BaseModel):
 
 
 class RoutingConfig(BaseModel):
-    default_strategy: str = "loaded_first"
     health_stale_after_s: float = 30.0
 
 

@@ -778,24 +778,49 @@ def _overlap_score(task_tokens: set[str], candidate_tokens: set[str]) -> float:
 
 
 def _benchmark_quality_score(results: dict) -> float:
+    """
+    Combine correctness and speed signals into a [0, 1] quality score.
+
+    Correctness (weight 0.65): pass_rate or quality_score from the workload run.
+    Speed (weight 0.35): tokens_per_sec and TTFT, each contributing up to 0.5 of
+    the speed component.
+
+    When a correctness signal is absent the speed component carries the full weight
+    so that services with runtime data but no workload results still rank above
+    those with no data at all.
+    """
     if not results:
         return 0.0
-    quality = 0.0
+
     tokens_per_sec = results.get("tokens_per_sec")
     ttft_ms = results.get("ttft_ms")
     pass_rate = results.get("pass_rate")
     quality_score = results.get("quality_score")
+
+    # Correctness component: best available signal in [0, 1].
+    correctness: float | None = None
     if isinstance(quality_score, (int, float)):
-        quality = max(quality, max(0.0, min(1.0, float(quality_score))))
+        correctness = max(0.0, min(1.0, float(quality_score)))
     if isinstance(pass_rate, (int, float)):
-        quality = max(quality, max(0.0, min(1.0, float(pass_rate))))
+        pr = max(0.0, min(1.0, float(pass_rate)))
+        correctness = pr if correctness is None else max(correctness, pr)
+
+    # Speed component: tokens/sec (up to 0.5) + TTFT bands (up to 0.5), in [0, 1].
+    speed = 0.0
     if isinstance(tokens_per_sec, (int, float)):
-        quality += min(0.35, float(tokens_per_sec) / 100.0)
+        speed += min(0.5, float(tokens_per_sec) / 80.0)
     if isinstance(ttft_ms, (int, float)):
-        if float(ttft_ms) <= 1000:
-            quality += 0.25
+        if float(ttft_ms) <= 500:
+            speed += 0.50
+        elif float(ttft_ms) <= 1000:
+            speed += 0.40
         elif float(ttft_ms) <= 2500:
-            quality += 0.15
+            speed += 0.25
         else:
-            quality += 0.05
-    return min(1.0, quality)
+            speed += 0.10
+    speed = min(1.0, speed)
+
+    if correctness is None:
+        # No correctness data — speed signal carries everything.
+        return speed
+    return 0.65 * correctness + 0.35 * speed

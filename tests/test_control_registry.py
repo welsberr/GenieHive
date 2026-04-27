@@ -2,7 +2,7 @@ from pathlib import Path
 
 from geniehive_control.main import create_app
 from geniehive_control.models import BenchmarkSample, HostHeartbeat, HostRegistration, RegisteredService, RoleProfile, RouteMatchRequest
-from geniehive_control.registry import Registry
+from geniehive_control.registry import Registry, _benchmark_quality_score
 
 
 def test_registry_persists_registration_and_heartbeat(tmp_path: Path) -> None:
@@ -366,3 +366,28 @@ def test_registry_exposes_asset_request_policy_in_model_metadata(tmp_path: Path)
     asset = next(item for item in models if item["id"] == "custom-model-v1")
     assert asset["geniehive"]["effective_request_policy"]["body_defaults"]["temperature"] == 0.2
     assert asset["geniehive"]["effective_request_policy"]["body_defaults"]["chat_template_kwargs"]["custom_flag"] == "yes"
+
+
+def test_benchmark_quality_score_stays_bounded_and_weighted() -> None:
+    # High correctness + fast speed must not exceed 1.0.
+    score = _benchmark_quality_score({"pass_rate": 1.0, "tokens_per_sec": 80, "ttft_ms": 400})
+    assert score <= 1.0
+    assert score > 0.9  # should be near 1.0
+
+    # Correctness dominates: high pass_rate with slow speed should still score well.
+    high_correct_slow = _benchmark_quality_score({"pass_rate": 0.95, "tokens_per_sec": 5, "ttft_ms": 4000})
+    low_correct_fast = _benchmark_quality_score({"pass_rate": 0.3, "tokens_per_sec": 80, "ttft_ms": 400})
+    assert high_correct_slow > low_correct_fast
+
+    # Speed-only (no correctness signal) returns a non-zero score.
+    speed_only = _benchmark_quality_score({"tokens_per_sec": 40, "ttft_ms": 800})
+    assert 0.0 < speed_only < 1.0
+
+    # Empty results return 0.
+    assert _benchmark_quality_score({}) == 0.0
+
+    # No stacking: pass_rate=1.0 alone should not score above 1.0 when speed is added.
+    perfect_correct = _benchmark_quality_score({"pass_rate": 1.0})
+    with_speed = _benchmark_quality_score({"pass_rate": 1.0, "tokens_per_sec": 100, "ttft_ms": 100})
+    assert with_speed <= 1.0
+    assert with_speed >= perfect_correct  # speed can only help, not hurt
