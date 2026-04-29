@@ -77,6 +77,24 @@ class Registry:
                     observed_at REAL NOT NULL,
                     results_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS client_keys (
+                    key_id TEXT PRIMARY KEY,
+                    key_hash TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    principal_type TEXT NOT NULL,
+                    principal_ref TEXT NOT NULL,
+                    role TEXT,
+                    allowed_models_json TEXT NOT NULL DEFAULT '[]',
+                    allowed_operations_json TEXT NOT NULL DEFAULT '[]',
+                    monthly_budget_cents INTEGER,
+                    monthly_token_limit INTEGER,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    last_used_at REAL,
+                    notes TEXT
+                );
                 """
             )
 
@@ -289,6 +307,88 @@ class Registry:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._benchmark_row_to_dict(row) for row in rows]
+
+    def create_client_key(
+        self,
+        *,
+        key_id: str,
+        key_hash: str,
+        display_name: str,
+        principal_type: str,
+        principal_ref: str,
+        role: str | None = None,
+        allowed_models: list[str] | None = None,
+        allowed_operations: list[str] | None = None,
+        monthly_budget_cents: int | None = None,
+        monthly_token_limit: int | None = None,
+        enabled: bool = True,
+        notes: str | None = None,
+    ) -> dict:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO client_keys (
+                    key_id, key_hash, display_name, principal_type, principal_ref,
+                    role, allowed_models_json, allowed_operations_json,
+                    monthly_budget_cents, monthly_token_limit, enabled,
+                    created_at, updated_at, last_used_at, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    key_id,
+                    key_hash,
+                    display_name,
+                    principal_type,
+                    principal_ref,
+                    role,
+                    _json_dumps(allowed_models or []),
+                    _json_dumps(allowed_operations or []),
+                    monthly_budget_cents,
+                    monthly_token_limit,
+                    1 if enabled else 0,
+                    now,
+                    now,
+                    notes,
+                ),
+            )
+        created = self.get_client_key(key_id)
+        if created is None:
+            raise RuntimeError(f"created client key {key_id!r} could not be loaded")
+        return created
+
+    def get_client_key(self, key_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM client_keys WHERE key_id = ?", (key_id,)).fetchone()
+        return self._client_key_row_to_dict(row) if row is not None else None
+
+    def get_client_key_by_hash(self, key_hash: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM client_keys WHERE key_hash = ?", (key_hash,)).fetchone()
+        return self._client_key_row_to_dict(row) if row is not None else None
+
+    def list_client_keys(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM client_keys ORDER BY created_at, key_id").fetchall()
+        return [self._client_key_row_to_dict(row) for row in rows]
+
+    def set_client_key_enabled(self, key_id: str, enabled: bool) -> dict | None:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE client_keys SET enabled = ?, updated_at = ? WHERE key_id = ?",
+                (1 if enabled else 0, now, key_id),
+            )
+        return self.get_client_key(key_id)
+
+    def touch_client_key(self, key_id: str) -> None:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE client_keys SET last_used_at = ?, updated_at = ? WHERE key_id = ?",
+                (now, now, key_id),
+            )
 
     def list_client_models(self) -> list[dict]:
         services = self.list_services()
@@ -805,6 +905,26 @@ class Registry:
             "workload": row["workload"],
             "observed_at": row["observed_at"],
             "results": json.loads(row["results_json"]),
+        }
+
+    @staticmethod
+    def _client_key_row_to_dict(row: sqlite3.Row) -> dict:
+        return {
+            "key_id": row["key_id"],
+            "key_hash": row["key_hash"],
+            "display_name": row["display_name"],
+            "principal_type": row["principal_type"],
+            "principal_ref": row["principal_ref"],
+            "role": row["role"],
+            "allowed_models": json.loads(row["allowed_models_json"]),
+            "allowed_operations": json.loads(row["allowed_operations_json"]),
+            "monthly_budget_cents": row["monthly_budget_cents"],
+            "monthly_token_limit": row["monthly_token_limit"],
+            "enabled": bool(row["enabled"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_used_at": row["last_used_at"],
+            "notes": row["notes"],
         }
 
 
