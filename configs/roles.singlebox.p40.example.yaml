@@ -21,6 +21,21 @@ roles:
       preferred_families: ["qwen3.5-9b", "qwen3.5"]
       require_loaded: true
 
+  - role_id: "scientific_translator"
+    display_name: "Scientific Translator"
+    description: "Translation-oriented chat route for site localization"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Translate faithfully. Preserve meaning, structure, citations, and technical terms. Return only the translation."
+      request_policy:
+        body_defaults:
+          temperature: 0.1
+    routing_policy:
+      preferred_families: ["qwen3.5-9b", "qwen3.5", "qwen2.5-14b", "qwen2.5"]
+      min_context: 8192
+      require_loaded: true
+
   - role_id: "background_summarizer"
     display_name: "Background Summarizer"
     description: "Slow fallback route for low-priority work"

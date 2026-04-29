@@ -9,6 +9,21 @@ roles:
       preferred_families: ["Qwen3", "Mistral"]
       min_context: 8192
 
+  - role_id: "scientific_translator"
+    display_name: "Scientific Translator"
+    description: "Translation-oriented chat route for site localization"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Translate faithfully. Preserve meaning, structure, citations, and technical terms. Return only the translation."
+      request_policy:
+        body_defaults:
+          temperature: 0.1
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      min_context: 8192
+      require_loaded: true
+
   - role_id: "embedder"
     display_name: "Embedder"
     operation: "embeddings"
