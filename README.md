@@ -22,6 +22,7 @@ Repository layout:
 - `docs/roadmap.md`: current milestones and near-term priorities
 - `docs/schemas.md`: canonical data models
 - `docs/deployment.md`: intended deployment approach
+- `docs/translation_support.md`: translation-oriented control-plane and node notes
 - `docs/demo.md`: first end-to-end control-plus-node demo flow
 - `docs/llm_demo.md`: detailed master/peer/client LLM demo runbook
 - `docs/reverse_proxy.md`: safer external exposure patterns
