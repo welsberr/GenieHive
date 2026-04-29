@@ -14,6 +14,39 @@ class ServerConfig(BaseModel):
 class AuthConfig(BaseModel):
     client_api_keys: list[str] = Field(default_factory=list)
     node_api_keys: list[str] = Field(default_factory=list)
+    enable_named_client_keys: bool = False
+    key_hash_secret_env: str = "GENIEHIVE_KEY_HASH_SECRET"
+
+
+class AuditConfig(BaseModel):
+    enabled: bool = False
+
+
+class AdminApiConfig(BaseModel):
+    enabled: bool = False
+
+
+class AuthorizationConfig(BaseModel):
+    enforce_model_allowlists: bool = False
+    enforce_operation_allowlists: bool = False
+    empty_allowlist_means_no_access: bool = True
+
+
+class ProviderConfig(BaseModel):
+    provider_id: str
+    provider_kind: str
+    base_url: str
+    api_key_env: str | None = None
+    default_headers: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class BudgetingConfig(BaseModel):
+    enabled: bool = False
+    reset_day_of_month: int = 1
+    global_monthly_budget_cents: int | None = None
+    provider_monthly_budget_cents: dict[str, int] = Field(default_factory=dict)
+    deny_on_unknown_cost: bool = False
 
 
 class StorageConfig(BaseModel):
@@ -33,8 +66,14 @@ class RoutingConfig(BaseModel):
 
 
 class ControlConfig(BaseModel):
+    deployment_profile: str = "casual"
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    audit: AuditConfig = Field(default_factory=AuditConfig)
+    admin_api: AdminApiConfig = Field(default_factory=AdminApiConfig)
+    authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig)
+    providers: list[ProviderConfig] = Field(default_factory=list)
+    budgeting: BudgetingConfig = Field(default_factory=BudgetingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     roles_path: str | None = None

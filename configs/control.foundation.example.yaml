@@ -1,0 +1,59 @@
+deployment_profile: "foundation_gateway"
+
+server:
+  host: "127.0.0.1"
+  port: 8800
+
+auth:
+  # Keep a break-glass/static admin key only for initial provisioning or recovery.
+  client_api_keys:
+    - "change-me-foundation-admin-key"
+  node_api_keys:
+    - "change-me-node-key"
+  enable_named_client_keys: true
+  key_hash_secret_env: "GENIEHIVE_KEY_HASH_SECRET"
+
+audit:
+  enabled: true
+
+admin_api:
+  enabled: true
+
+authorization:
+  enforce_model_allowlists: true
+  enforce_operation_allowlists: true
+  empty_allowlist_means_no_access: true
+
+storage:
+  sqlite_path: "state/geniehive.foundation.sqlite3"
+
+roles_path: "configs/roles.foundation.archive.yaml"
+
+routing:
+  health_stale_after_s: 30
+  default_strategy: "scored"
+
+providers:
+  # Provider-backed services are optional. Keep API keys in environment variables,
+  # not in YAML or client scripts.
+  - provider_id: "openai-foundation"
+    provider_kind: "openai_compatible"
+    base_url: "https://api.openai.com"
+    api_key_env: "OPENAI_API_KEY"
+    enabled: false
+  - provider_id: "anthropic-foundation"
+    provider_kind: "anthropic_messages"
+    base_url: "https://api.anthropic.com"
+    api_key_env: "ANTHROPIC_API_KEY"
+    default_headers:
+      anthropic-version: "2023-06-01"
+    enabled: false
+
+budgeting:
+  enabled: false
+  reset_day_of_month: 1
+  global_monthly_budget_cents: 5000
+  provider_monthly_budget_cents:
+    openai-foundation: 3000
+    anthropic-foundation: 3000
+  deny_on_unknown_cost: false
