@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .auth import require_client_auth, require_node_auth
+from .auth import require_admin_auth, require_client_auth, require_node_auth
 from .chat import ProxyError, _prepare_chat_upstream, proxy_chat_completion, proxy_embeddings, proxy_transcription, stream_chat_completion
 from .config import ControlConfig, load_config
+from .keys import generate_api_key, hash_api_key
 from .models import BenchmarkIngestRequest, HostHeartbeat, HostRegistration, RouteMatchRequest, RouteMatchResponse
 from .probe import ServiceProber
 from .roles import load_role_catalog
@@ -60,6 +62,69 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    def _public_client_key(row: dict) -> dict:
+        return {
+            key: value
+            for key, value in row.items()
+            if key != "key_hash"
+        }
+
+    if cfg.admin_api.enabled:
+        @app.post("/v1/admin/client-keys")
+        async def create_client_key(request: Request, _=Depends(require_admin_auth)) -> dict:
+            if not cfg.auth.enable_named_client_keys:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="named client keys are not enabled",
+                )
+            secret = os.environ.get(cfg.auth.key_hash_secret_env)
+            if not secret:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"{cfg.auth.key_hash_secret_env} is required for named client keys",
+                )
+            payload = await request.json()
+            raw_key = generate_api_key()
+            key_id = payload.get("key_id") or f"ck_{uuid.uuid4().hex}"
+            created = request.app.state.registry.create_client_key(
+                key_id=key_id,
+                key_hash=hash_api_key(raw_key, secret=secret),
+                display_name=payload["display_name"],
+                principal_type=payload["principal_type"],
+                principal_ref=payload["principal_ref"],
+                role=payload.get("role"),
+                allowed_models=payload.get("allowed_models") or [],
+                allowed_operations=payload.get("allowed_operations") or [],
+                monthly_budget_cents=payload.get("monthly_budget_cents"),
+                monthly_token_limit=payload.get("monthly_token_limit"),
+                enabled=payload.get("enabled", True),
+                notes=payload.get("notes"),
+            )
+            return {
+                "status": "ok",
+                "api_key": raw_key,
+                "client_key": _public_client_key(created),
+            }
+
+        @app.get("/v1/admin/client-keys")
+        async def list_client_keys(request: Request, _=Depends(require_admin_auth)) -> dict:
+            rows = request.app.state.registry.list_client_keys()
+            return {"object": "list", "data": [_public_client_key(row) for row in rows]}
+
+        @app.post("/v1/admin/client-keys/{key_id}/disable")
+        async def disable_client_key(key_id: str, request: Request, _=Depends(require_admin_auth)) -> dict:
+            updated = request.app.state.registry.set_client_key_enabled(key_id, False)
+            if updated is None:
+                return JSONResponse(status_code=404, content={"error": "unknown_client_key", "key_id": key_id})
+            return {"status": "ok", "client_key": _public_client_key(updated)}
+
+        @app.post("/v1/admin/client-keys/{key_id}/enable")
+        async def enable_client_key(key_id: str, request: Request, _=Depends(require_admin_auth)) -> dict:
+            updated = request.app.state.registry.set_client_key_enabled(key_id, True)
+            if updated is None:
+                return JSONResponse(status_code=404, content={"error": "unknown_client_key", "key_id": key_id})
+            return {"status": "ok", "client_key": _public_client_key(updated)}
 
     @app.post("/v1/nodes/register")
     async def register_node(request: Request, _=Depends(require_node_auth)) -> dict:

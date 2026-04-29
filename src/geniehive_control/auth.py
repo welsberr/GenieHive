@@ -92,3 +92,19 @@ def require_client_auth(request: Request) -> ClientContext:
 def require_node_auth(request: Request) -> None:
     cfg = request.app.state.cfg
     _check_key(request, cfg.auth.node_api_keys, "X-GenieHive-Node-Key")
+
+
+def require_admin_auth(request: Request) -> ClientContext:
+    cfg = request.app.state.cfg
+    if not cfg.admin_api.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="not found",
+        )
+    context = require_client_auth(request)
+    if context.auth_kind == "static" or context.role == "admin":
+        return context
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="admin access required",
+    )

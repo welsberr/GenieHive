@@ -133,3 +133,89 @@ storage:
 
     response = client.get("/v1/models", headers={"X-Api-Key": raw_key})
     assert response.status_code == 401
+
+
+def test_admin_client_key_endpoints_are_hidden_by_default() -> None:
+    app = create_app()
+    paths = {route.path for route in app.routes}
+
+    assert "/v1/admin/client-keys" not in paths
+
+
+def test_admin_can_create_list_disable_and_enable_named_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GENIEHIVE_KEY_HASH_SECRET", "test-secret")
+    db_path = tmp_path / "geniehive.sqlite3"
+    config_path = _write_config(
+        tmp_path,
+        f"""
+auth:
+  client_api_keys:
+    - admin-static-key
+  enable_named_client_keys: true
+admin_api:
+  enabled: true
+storage:
+  sqlite_path: "{db_path}"
+""",
+    )
+    app = create_app(config_path)
+    client = TestClient(app)
+
+    denied = client.get("/v1/admin/client-keys")
+    assert denied.status_code == 401
+
+    created = client.post(
+        "/v1/admin/client-keys",
+        headers={"X-Api-Key": "admin-static-key"},
+        json={
+            "key_id": "ck_created",
+            "display_name": "Archive Migration",
+            "principal_type": "person",
+            "principal_ref": "wesley",
+            "role": "developer",
+            "allowed_models": ["archive_migrator"],
+            "allowed_operations": ["chat"],
+        },
+    )
+    assert created.status_code == 200
+    created_body = created.json()
+    assert created_body["api_key"].startswith("gh_")
+    assert created_body["client_key"]["key_id"] == "ck_created"
+    assert "key_hash" not in created_body["client_key"]
+
+    listed = client.get(
+        "/v1/admin/client-keys",
+        headers={"X-Api-Key": "admin-static-key"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["key_id"] == "ck_created"
+    assert "key_hash" not in listed.json()["data"][0]
+
+    disabled = client.post(
+        "/v1/admin/client-keys/ck_created/disable",
+        headers={"X-Api-Key": "admin-static-key"},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["client_key"]["enabled"] is False
+
+    named_denied = client.get(
+        "/v1/models",
+        headers={"X-Api-Key": created_body["api_key"]},
+    )
+    assert named_denied.status_code == 401
+
+    enabled = client.post(
+        "/v1/admin/client-keys/ck_created/enable",
+        headers={"X-Api-Key": "admin-static-key"},
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["client_key"]["enabled"] is True
+
+    named_ok = client.get(
+        "/v1/models",
+        headers={"X-Api-Key": created_body["api_key"]},
+    )
+    assert named_ok.status_code == 200

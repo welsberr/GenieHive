@@ -55,11 +55,11 @@ python -m pytest -q tests
 
 Expected current result at baseline: all tests pass.
 
-Current verification result after adding the Foundation roadmap and config
-profile scaffold:
+Current verification result after adding the Foundation roadmap, config profile
+scaffold, named client key storage, opt-in named auth, and admin key endpoints:
 
 ```text
-50 passed
+58 passed
 ```
 
 ## Known Constraints
