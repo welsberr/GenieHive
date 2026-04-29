@@ -185,6 +185,10 @@ Acceptance:
 Goal: make production requests attributable without storing prompt or completion
 content.
 
+Status: implemented for chat, embeddings, and transcription request wrappers.
+Audit logging is disabled by default and enabled by `audit.enabled`. Admin audit
+read endpoints are only mounted when `admin_api.enabled` is true.
+
 Tasks:
 
 - Add request ID generation from `X-Request-Id` or UUID.

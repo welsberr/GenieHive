@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -17,6 +19,7 @@ from .models import BenchmarkIngestRequest, HostHeartbeat, HostRegistration, Rou
 from .probe import ServiceProber
 from .roles import load_role_catalog
 from .registry import Registry
+from .routing import choose_upstream_model_id
 from .upstream import UpstreamClient, UpstreamError
 
 
@@ -69,6 +72,86 @@ def create_app(
             for key, value in row.items()
             if key != "key_hash"
         }
+
+    def _request_id(request: Request) -> str:
+        return request.headers.get("X-Request-Id") or f"req_{uuid.uuid4().hex}"
+
+    def _client_context(request: Request):
+        return getattr(request.state, "client_context", None)
+
+    def _route_audit_metadata(reg: Registry, requested_model: str | None, *, kind: str) -> dict:
+        if not requested_model:
+            return {
+                "requested_model": None,
+                "resolved_service_id": None,
+                "resolved_host_id": None,
+                "upstream_model": None,
+                "provider_kind": None,
+            }
+        resolved = reg.resolve_route(requested_model, kind=kind)
+        service = resolved.get("service") if resolved else None
+        if not service:
+            return {
+                "requested_model": requested_model,
+                "resolved_service_id": None,
+                "resolved_host_id": None,
+                "upstream_model": None,
+                "provider_kind": None,
+            }
+        return {
+            "requested_model": requested_model,
+            "resolved_service_id": service.get("service_id"),
+            "resolved_host_id": service.get("host_id"),
+            "upstream_model": choose_upstream_model_id(requested_model, service),
+            "provider_kind": service.get("protocol"),
+        }
+
+    def _usage_from_response(response: object) -> dict[str, int | None]:
+        usage = response.get("usage", {}) if isinstance(response, dict) else {}
+        return {
+            "prompt_tokens": usage.get("prompt_tokens") if isinstance(usage, dict) else None,
+            "completion_tokens": usage.get("completion_tokens") if isinstance(usage, dict) else None,
+            "total_tokens": usage.get("total_tokens") if isinstance(usage, dict) else None,
+        }
+
+    def _audit_request(
+        request: Request,
+        *,
+        request_id: str,
+        operation: str,
+        route_metadata: dict,
+        started_at: float,
+        status_code: int,
+        success: bool,
+        response: object | None = None,
+        error_type: str | None = None,
+        input_bytes: int | None = None,
+        output_bytes: int | None = None,
+    ) -> None:
+        if not cfg.audit.enabled:
+            return
+        context = _client_context(request)
+        usage = _usage_from_response(response)
+        request.app.state.registry.record_request_audit(
+            request_id=request_id,
+            key_id=getattr(context, "key_id", None),
+            principal_type=getattr(context, "principal_type", None),
+            principal_ref=getattr(context, "principal_ref", None),
+            operation=operation,
+            requested_model=route_metadata.get("requested_model"),
+            resolved_service_id=route_metadata.get("resolved_service_id"),
+            resolved_host_id=route_metadata.get("resolved_host_id"),
+            upstream_model=route_metadata.get("upstream_model"),
+            provider_kind=route_metadata.get("provider_kind"),
+            started_at=started_at,
+            finished_at=time.time(),
+            status_code=status_code,
+            success=success,
+            error_type=error_type,
+            input_bytes=input_bytes,
+            output_bytes=output_bytes,
+            **usage,
+        )
 
     if cfg.admin_api.enabled:
         @app.post("/v1/admin/client-keys")
@@ -126,6 +209,41 @@ def create_app(
                 return JSONResponse(status_code=404, content={"error": "unknown_client_key", "key_id": key_id})
             return {"status": "ok", "client_key": _public_client_key(updated)}
 
+        @app.get("/v1/admin/audit/requests")
+        async def list_audit_requests(
+            request: Request,
+            key_id: str | None = None,
+            principal_ref: str | None = None,
+            operation: str | None = None,
+            model: str | None = None,
+            success: bool | None = None,
+            limit: int = 100,
+            _=Depends(require_admin_auth),
+        ) -> dict:
+            if not cfg.audit.enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="audit logging is not enabled",
+                )
+            rows = request.app.state.registry.list_request_audit(
+                key_id=key_id,
+                principal_ref=principal_ref,
+                operation=operation,
+                model=model,
+                success=success,
+                limit=limit,
+            )
+            return {"object": "list", "data": rows}
+
+        @app.get("/v1/admin/audit/summary")
+        async def audit_summary(request: Request, _=Depends(require_admin_auth)) -> dict:
+            if not cfg.audit.enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="audit logging is not enabled",
+                )
+            return {"object": "list", "data": request.app.state.registry.request_audit_summary()}
+
     @app.post("/v1/nodes/register")
     async def register_node(request: Request, _=Depends(require_node_auth)) -> dict:
         payload = await request.json()
@@ -155,45 +273,142 @@ def create_app(
         body = await request.json()
         reg: Registry = request.app.state.registry
         up: UpstreamClient = request.app.state.upstream
+        request_id = _request_id(request)
+        started_at = time.time()
+        route_metadata = _route_audit_metadata(reg, body.get("model"), kind="chat")
+        input_bytes = len(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         try:
             if body.get("stream"):
                 # Resolve route eagerly so ProxyError is raised before streaming starts.
                 service, upstream_body = _prepare_chat_upstream(body, registry=reg)
+                _audit_request(
+                    request,
+                    request_id=request_id,
+                    operation="chat",
+                    route_metadata=route_metadata,
+                    started_at=started_at,
+                    status_code=200,
+                    success=True,
+                    input_bytes=input_bytes,
+                )
                 return StreamingResponse(
                     stream_chat_completion(service, upstream_body, upstream=up),
                     media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Request-Id": request_id},
                 )
-            return await proxy_chat_completion(body, registry=reg, upstream=up)
+            response = await proxy_chat_completion(body, registry=reg, upstream=up)
+            output_bytes = len(json.dumps(response, separators=(",", ":")).encode("utf-8")) if isinstance(response, dict) else None
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="chat",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=200,
+                success=True,
+                response=response,
+                input_bytes=input_bytes,
+                output_bytes=output_bytes,
+            )
+            return JSONResponse(content=response, headers={"X-Request-Id": request_id})
         except ProxyError as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="chat",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="proxy_error",
+                input_bytes=input_bytes,
+            )
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "chat_proxy_error"}},
+                headers={"X-Request-Id": request_id},
             )
         except UpstreamError as exc:
+            status_code = exc.status_code or 502
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="chat",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=status_code,
+                success=False,
+                error_type="upstream_error",
+                input_bytes=input_bytes,
+            )
             return JSONResponse(
-                status_code=exc.status_code or 502,
+                status_code=status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "upstream_error"}},
+                headers={"X-Request-Id": request_id},
             )
 
     @app.post("/v1/embeddings")
     async def embeddings(request: Request, _=Depends(require_client_auth)):
         body = await request.json()
+        reg: Registry = request.app.state.registry
+        request_id = _request_id(request)
+        started_at = time.time()
+        route_metadata = _route_audit_metadata(reg, body.get("model"), kind="embeddings")
+        input_bytes = len(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         try:
-            return await proxy_embeddings(
+            response = await proxy_embeddings(
                 body,
-                registry=request.app.state.registry,
+                registry=reg,
                 upstream=request.app.state.upstream,
             )
+            output_bytes = len(json.dumps(response, separators=(",", ":")).encode("utf-8")) if isinstance(response, dict) else None
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="embeddings",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=200,
+                success=True,
+                response=response,
+                input_bytes=input_bytes,
+                output_bytes=output_bytes,
+            )
+            return JSONResponse(content=response, headers={"X-Request-Id": request_id})
         except ProxyError as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="embeddings",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="proxy_error",
+                input_bytes=input_bytes,
+            )
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "embeddings_proxy_error"}},
+                headers={"X-Request-Id": request_id},
             )
         except UpstreamError as exc:
+            status_code = exc.status_code or 502
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="embeddings",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=status_code,
+                success=False,
+                error_type="upstream_error",
+                input_bytes=input_bytes,
+            )
             return JSONResponse(
-                status_code=exc.status_code or 502,
+                status_code=status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "upstream_error"}},
+                headers={"X-Request-Id": request_id},
             )
 
     @app.post("/v1/audio/transcriptions")
@@ -207,8 +422,11 @@ def create_app(
         temperature: float | None = Form(None),
         _=Depends(require_client_auth),
     ):
+        request_id = _request_id(request)
+        started_at = time.time()
+        route_metadata = _route_audit_metadata(request.app.state.registry, model, kind="transcription")
         try:
-            return await proxy_transcription(
+            response = await proxy_transcription(
                 model=model,
                 file=file,
                 language=language,
@@ -218,15 +436,51 @@ def create_app(
                 registry=request.app.state.registry,
                 upstream=request.app.state.upstream,
             )
+            output_bytes = len(json.dumps(response, separators=(",", ":")).encode("utf-8")) if isinstance(response, dict) else None
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="transcription",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=200,
+                success=True,
+                response=response,
+                output_bytes=output_bytes,
+            )
+            return JSONResponse(content=response, headers={"X-Request-Id": request_id})
         except ProxyError as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="transcription",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="proxy_error",
+            )
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "transcription_proxy_error"}},
+                headers={"X-Request-Id": request_id},
             )
         except UpstreamError as exc:
+            status_code = exc.status_code or 502
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="transcription",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=status_code,
+                success=False,
+                error_type="upstream_error",
+            )
             return JSONResponse(
-                status_code=exc.status_code or 502,
+                status_code=status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "upstream_error"}},
+                headers={"X-Request-Id": request_id},
             )
 
     @app.get("/v1/cluster/services")

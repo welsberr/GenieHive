@@ -95,6 +95,32 @@ class Registry:
                     last_used_at REAL,
                     notes TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS request_audit_log (
+                    request_id TEXT PRIMARY KEY,
+                    key_id TEXT,
+                    principal_type TEXT,
+                    principal_ref TEXT,
+                    operation TEXT NOT NULL,
+                    requested_model TEXT,
+                    resolved_service_id TEXT,
+                    resolved_host_id TEXT,
+                    upstream_model TEXT,
+                    provider_kind TEXT,
+                    started_at REAL NOT NULL,
+                    finished_at REAL NOT NULL,
+                    duration_ms REAL NOT NULL,
+                    status_code INTEGER NOT NULL,
+                    success INTEGER NOT NULL,
+                    error_type TEXT,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    estimated_cost_cents REAL,
+                    input_bytes INTEGER,
+                    output_bytes INTEGER,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
                 """
             )
 
@@ -389,6 +415,145 @@ class Registry:
                 "UPDATE client_keys SET last_used_at = ?, updated_at = ? WHERE key_id = ?",
                 (now, now, key_id),
             )
+
+    def record_request_audit(
+        self,
+        *,
+        request_id: str,
+        key_id: str | None,
+        principal_type: str | None,
+        principal_ref: str | None,
+        operation: str,
+        requested_model: str | None,
+        resolved_service_id: str | None,
+        resolved_host_id: str | None,
+        upstream_model: str | None,
+        provider_kind: str | None,
+        started_at: float,
+        finished_at: float,
+        status_code: int,
+        success: bool,
+        error_type: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        estimated_cost_cents: float | None = None,
+        input_bytes: int | None = None,
+        output_bytes: int | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        duration_ms = max(0.0, (finished_at - started_at) * 1000.0)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO request_audit_log (
+                    request_id, key_id, principal_type, principal_ref,
+                    operation, requested_model, resolved_service_id,
+                    resolved_host_id, upstream_model, provider_kind,
+                    started_at, finished_at, duration_ms, status_code, success,
+                    error_type, prompt_tokens, completion_tokens, total_tokens,
+                    estimated_cost_cents, input_bytes, output_bytes,
+                    metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_id,
+                    key_id,
+                    principal_type,
+                    principal_ref,
+                    operation,
+                    requested_model,
+                    resolved_service_id,
+                    resolved_host_id,
+                    upstream_model,
+                    provider_kind,
+                    started_at,
+                    finished_at,
+                    duration_ms,
+                    status_code,
+                    1 if success else 0,
+                    error_type,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    estimated_cost_cents,
+                    input_bytes,
+                    output_bytes,
+                    _json_dumps(metadata or {}),
+                ),
+            )
+        row = self.get_request_audit(request_id)
+        if row is None:
+            raise RuntimeError(f"created audit row {request_id!r} could not be loaded")
+        return row
+
+    def get_request_audit(self, request_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM request_audit_log WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        return self._request_audit_row_to_dict(row) if row is not None else None
+
+    def list_request_audit(
+        self,
+        *,
+        key_id: str | None = None,
+        principal_ref: str | None = None,
+        operation: str | None = None,
+        model: str | None = None,
+        success: bool | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        query = "SELECT * FROM request_audit_log"
+        clauses = []
+        params: list[object] = []
+        if key_id:
+            clauses.append("key_id = ?")
+            params.append(key_id)
+        if principal_ref:
+            clauses.append("principal_ref = ?")
+            params.append(principal_ref)
+        if operation:
+            clauses.append("operation = ?")
+            params.append(operation)
+        if model:
+            clauses.append("requested_model = ?")
+            params.append(model)
+        if success is not None:
+            clauses.append("success = ?")
+            params.append(1 if success else 0)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY started_at DESC LIMIT ?"
+        params.append(max(1, min(limit, 1000)))
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._request_audit_row_to_dict(row) for row in rows]
+
+    def request_audit_summary(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    key_id,
+                    principal_ref,
+                    operation,
+                    requested_model,
+                    COUNT(*) AS request_count,
+                    SUM(success) AS success_count,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failure_count,
+                    SUM(COALESCE(prompt_tokens, 0)) AS prompt_tokens,
+                    SUM(COALESCE(completion_tokens, 0)) AS completion_tokens,
+                    SUM(COALESCE(total_tokens, 0)) AS total_tokens,
+                    SUM(COALESCE(estimated_cost_cents, 0)) AS estimated_cost_cents
+                FROM request_audit_log
+                GROUP BY key_id, principal_ref, operation, requested_model
+                ORDER BY request_count DESC, requested_model
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_client_models(self) -> list[dict]:
         services = self.list_services()
@@ -925,6 +1090,34 @@ class Registry:
             "updated_at": row["updated_at"],
             "last_used_at": row["last_used_at"],
             "notes": row["notes"],
+        }
+
+    @staticmethod
+    def _request_audit_row_to_dict(row: sqlite3.Row) -> dict:
+        return {
+            "request_id": row["request_id"],
+            "key_id": row["key_id"],
+            "principal_type": row["principal_type"],
+            "principal_ref": row["principal_ref"],
+            "operation": row["operation"],
+            "requested_model": row["requested_model"],
+            "resolved_service_id": row["resolved_service_id"],
+            "resolved_host_id": row["resolved_host_id"],
+            "upstream_model": row["upstream_model"],
+            "provider_kind": row["provider_kind"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "duration_ms": row["duration_ms"],
+            "status_code": row["status_code"],
+            "success": bool(row["success"]),
+            "error_type": row["error_type"],
+            "prompt_tokens": row["prompt_tokens"],
+            "completion_tokens": row["completion_tokens"],
+            "total_tokens": row["total_tokens"],
+            "estimated_cost_cents": row["estimated_cost_cents"],
+            "input_bytes": row["input_bytes"],
+            "output_bytes": row["output_bytes"],
+            "metadata": json.loads(row["metadata_json"]),
         }
 
 
