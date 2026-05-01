@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 
 from fastapi import HTTPException, Request, status
 
@@ -108,3 +109,61 @@ def require_admin_auth(request: Request) -> ClientContext:
         status_code=status.HTTP_403_FORBIDDEN,
         detail="admin access required",
     )
+
+
+def authorize_client_request(request: Request, *, operation: str, model: str | None) -> None:
+    cfg = request.app.state.cfg
+    context = getattr(request.state, "client_context", None)
+    if context is None:
+        return
+    # Static and development auth preserve casual-deployment behavior. Foundation
+    # scoped access is enforced for named keys only.
+    if context.auth_kind != "named":
+        return
+    if cfg.authorization.enforce_operation_allowlists:
+        _authorize_value(
+            value=operation,
+            allowed=context.allowed_operations,
+            empty_means_no_access=cfg.authorization.empty_allowlist_means_no_access,
+            denied_detail=f"operation '{operation}' is not allowed for this key",
+        )
+    if cfg.authorization.enforce_model_allowlists:
+        if not model:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="model is required for model authorization",
+            )
+        _authorize_value(
+            value=model,
+            allowed=context.allowed_models,
+            empty_means_no_access=cfg.authorization.empty_allowlist_means_no_access,
+            denied_detail=f"model '{model}' is not allowed for this key",
+        )
+
+
+def _authorize_value(
+    *,
+    value: str,
+    allowed: tuple[str, ...],
+    empty_means_no_access: bool,
+    denied_detail: str,
+) -> None:
+    if not allowed:
+        if empty_means_no_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=denied_detail,
+            )
+        return
+    if any(_allow_pattern_matches(pattern, value) for pattern in allowed):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=denied_detail,
+    )
+
+
+def _allow_pattern_matches(pattern: str, value: str) -> bool:
+    if pattern.startswith("role/"):
+        pattern = pattern.removeprefix("role/")
+    return fnmatchcase(value, pattern)

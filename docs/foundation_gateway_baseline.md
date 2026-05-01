@@ -57,10 +57,10 @@ Expected current result at baseline: all tests pass.
 
 Current verification result after adding the Foundation roadmap, config profile
 scaffold, named client key storage, opt-in named auth, admin key endpoints, and
-request audit logging:
+request audit logging, and named-key model/operation authorization:
 
 ```text
-61 passed
+66 passed
 ```
 
 ## Known Constraints

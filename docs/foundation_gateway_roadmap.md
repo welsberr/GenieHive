@@ -210,6 +210,11 @@ Acceptance:
 
 Goal: let Foundation keys be limited to approved roles, models, and operations.
 
+Status: implemented for named client keys. Enforcement is controlled by
+`authorization.enforce_model_allowlists` and
+`authorization.enforce_operation_allowlists`. Static and development auth retain
+casual-deployment behavior.
+
 Tasks:
 
 - Add allowed models and allowed operations to named keys.

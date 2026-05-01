@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .auth import require_admin_auth, require_client_auth, require_node_auth
+from .auth import authorize_client_request, require_admin_auth, require_client_auth, require_node_auth
 from .chat import ProxyError, _prepare_chat_upstream, proxy_chat_completion, proxy_embeddings, proxy_transcription, stream_chat_completion
 from .config import ControlConfig, load_config
 from .keys import generate_api_key, hash_api_key
@@ -278,6 +278,7 @@ def create_app(
         route_metadata = _route_audit_metadata(reg, body.get("model"), kind="chat")
         input_bytes = len(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         try:
+            authorize_client_request(request, operation="chat", model=body.get("model"))
             if body.get("stream"):
                 # Resolve route eagerly so ProxyError is raised before streaming starts.
                 service, upstream_body = _prepare_chat_upstream(body, registry=reg)
@@ -328,6 +329,23 @@ def create_app(
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "chat_proxy_error"}},
                 headers={"X-Request-Id": request_id},
             )
+        except HTTPException as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="chat",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="authorization_error",
+                input_bytes=input_bytes,
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc.detail), "type": "geniehive_error", "code": "authorization_error"}},
+                headers={"X-Request-Id": request_id},
+            )
         except UpstreamError as exc:
             status_code = exc.status_code or 502
             _audit_request(
@@ -356,6 +374,7 @@ def create_app(
         route_metadata = _route_audit_metadata(reg, body.get("model"), kind="embeddings")
         input_bytes = len(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         try:
+            authorize_client_request(request, operation="embeddings", model=body.get("model"))
             response = await proxy_embeddings(
                 body,
                 registry=reg,
@@ -392,6 +411,23 @@ def create_app(
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "embeddings_proxy_error"}},
                 headers={"X-Request-Id": request_id},
             )
+        except HTTPException as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="embeddings",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="authorization_error",
+                input_bytes=input_bytes,
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc.detail), "type": "geniehive_error", "code": "authorization_error"}},
+                headers={"X-Request-Id": request_id},
+            )
         except UpstreamError as exc:
             status_code = exc.status_code or 502
             _audit_request(
@@ -426,6 +462,7 @@ def create_app(
         started_at = time.time()
         route_metadata = _route_audit_metadata(request.app.state.registry, model, kind="transcription")
         try:
+            authorize_client_request(request, operation="transcription", model=model)
             response = await proxy_transcription(
                 model=model,
                 file=file,
@@ -463,6 +500,22 @@ def create_app(
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "transcription_proxy_error"}},
+                headers={"X-Request-Id": request_id},
+            )
+        except HTTPException as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="transcription",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="authorization_error",
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc.detail), "type": "geniehive_error", "code": "authorization_error"}},
                 headers={"X-Request-Id": request_id},
             )
         except UpstreamError as exc:
