@@ -26,6 +26,7 @@ Repository layout:
 - `docs/demo.md`: first end-to-end control-plus-node demo flow
 - `docs/llm_demo.md`: detailed master/peer/client LLM demo runbook
 - `docs/reverse_proxy.md`: safer external exposure patterns
+- `docs/forge_integration.md`: Forge proxy routing for agentic tool-use roles
 - `configs/`: example control-plane, node, and role configs
 - `scripts/`: small launch and inspection helpers
 - `src/geniehive_control/`: control-plane package

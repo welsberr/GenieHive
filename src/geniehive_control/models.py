@@ -84,6 +84,11 @@ class RoutingPolicy(BaseModel):
     min_context: int | None = None
     require_loaded: bool = False
     fallback_roles: list[str] = Field(default_factory=list)
+    guardrail_profile: Literal["none", "forge_proxy", "forge_middleware", "native_light"] = "none"
+    tool_mode: Literal["auto", "native", "prompt", "none"] = "auto"
+    force_respond_tool: bool = False
+    context_budget_mode: Literal["auto", "upstream", "conservative"] = "auto"
+    agentic_benchmark_workloads: list[str] = Field(default_factory=list)
 
 
 class RoleProfile(BaseModel):

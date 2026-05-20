@@ -14,6 +14,29 @@ def _json_dumps(value: object) -> str:
     return json.dumps(value, sort_keys=True)
 
 
+def _service_matches_guardrail_profile(service: dict | None, guardrail_profile: str | None) -> bool:
+    if service is None or not guardrail_profile or guardrail_profile == "none":
+        return False
+    if guardrail_profile == "native_light":
+        return service.get("protocol") == "openai"
+    service_text = " ".join(
+        str(part)
+        for part in (
+            service.get("service_id", ""),
+            service.get("protocol", ""),
+            (service.get("runtime") or {}).get("engine", ""),
+            (service.get("runtime") or {}).get("launcher", ""),
+            service.get("endpoint", ""),
+        )
+        if part
+    ).lower()
+    if guardrail_profile == "forge_proxy":
+        return "forge" in service_text
+    if guardrail_profile == "forge_middleware":
+        return "forge" in service_text or "guardrail" in service_text
+    return False
+
+
 class Registry:
     def __init__(self, db_path: str | Path, *, routing_strategy: str = "scored") -> None:
         self.db_path = Path(db_path)
@@ -667,7 +690,10 @@ class Registry:
 
         preferred_families = [family.lower() for family in role["routing_policy"].get("preferred_families", [])]
 
-        def score(service: dict) -> tuple[int, int, float, str]:
+        guardrail_profile = role["routing_policy"].get("guardrail_profile", "none")
+
+        def score(service: dict) -> tuple[int, int, int, float, str]:
+            guardrail_match = 1 if _service_matches_guardrail_profile(service, guardrail_profile) else 0
             loaded = 1 if any(asset.get("loaded") for asset in service["assets"]) else 0
             family_match = 0
             if preferred_families:
@@ -675,7 +701,7 @@ class Registry:
                 family_match = 1 if any(family in asset_names for family in preferred_families) else 0
             latency = service["observed"].get("p50_latency_ms")
             latency_score = float(latency) if latency is not None else float("inf")
-            return (family_match, loaded, -latency_score, service["service_id"])
+            return (guardrail_match, family_match, loaded, -latency_score, service["service_id"])
 
         if role["routing_policy"].get("require_loaded"):
             loaded_candidates = [service for service in candidates if any(asset.get("loaded") for asset in service["assets"])]
@@ -781,6 +807,9 @@ class Registry:
             (role.get("prompt_policy") or {}).get("system_prompt", "") or "",
             " ".join((role.get("routing_policy") or {}).get("preferred_families", [])),
             " ".join((role.get("routing_policy") or {}).get("preferred_labels", [])),
+            str((role.get("routing_policy") or {}).get("guardrail_profile", "")),
+            str((role.get("routing_policy") or {}).get("tool_mode", "")),
+            " ".join((role.get("routing_policy") or {}).get("agentic_benchmark_workloads", [])),
         ]
         text_score = _overlap_score(task_tokens, _tokenize_text(" ".join(text_parts)))
         preferred_families = [family.lower() for family in (role.get("routing_policy") or {}).get("preferred_families", [])]
@@ -789,15 +818,19 @@ class Registry:
             asset_names = " ".join(asset.get("asset_id", "") for asset in service["assets"]).lower()
             if any(family in asset_names for family in preferred_families):
                 family_score = 1.0
+        guardrail_profile = (role.get("routing_policy") or {}).get("guardrail_profile", "none")
+        guardrail_score = 1.0 if _service_matches_guardrail_profile(service, guardrail_profile) else 0.0
         runtime_score, runtime_reasons, runtime_signals = self._runtime_signals(service)
         benchmark_score, benchmark_reasons, benchmark_signals = self._benchmark_signals(service, tasks, workloads)
 
-        score = min(1.0, 0.30 * text_score + 0.15 * family_score + 0.30 * runtime_score + 0.25 * benchmark_score)
+        score = min(1.0, 0.25 * text_score + 0.12 * family_score + 0.13 * guardrail_score + 0.25 * runtime_score + 0.25 * benchmark_score)
         reasons = []
         if text_score > 0:
             reasons.append("task text overlaps role description or policy")
         if family_score > 0:
             reasons.append("resolved service matches role preferred model family")
+        if guardrail_score > 0:
+            reasons.append("resolved service matches role guardrail profile")
         reasons.extend(runtime_reasons)
         reasons.extend(benchmark_reasons)
         if service is None:
@@ -811,6 +844,7 @@ class Registry:
             "signals": {
                 "task_overlap": round(text_score, 4),
                 "preferred_family_match": family_score,
+                "guardrail_profile_match": guardrail_score,
                 **runtime_signals,
                 **benchmark_signals,
             },
@@ -1140,7 +1174,8 @@ def _benchmark_quality_score(results: dict) -> float:
     """
     Combine correctness and speed signals into a [0, 1] quality score.
 
-    Correctness (weight 0.65): pass_rate or quality_score from the workload run.
+    Correctness (weight 0.65): pass_rate, quality_score, or Forge-style
+    agentic workflow metrics from the workload run.
     Speed (weight 0.35): tokens_per_sec and TTFT, each contributing up to 0.5 of
     the speed component.
 
@@ -1155,14 +1190,27 @@ def _benchmark_quality_score(results: dict) -> float:
     ttft_ms = results.get("ttft_ms")
     pass_rate = results.get("pass_rate")
     quality_score = results.get("quality_score")
+    terminal_accuracy = results.get("terminal_accuracy")
+    completion_rate = results.get("completion_rate")
+    terminal_tool_completion_rate = results.get("terminal_tool_completion_rate")
+    tool_success_rate = results.get("tool_success_rate")
 
     # Correctness component: best available signal in [0, 1].
     correctness: float | None = None
-    if isinstance(quality_score, (int, float)):
-        correctness = max(0.0, min(1.0, float(quality_score)))
-    if isinstance(pass_rate, (int, float)):
-        pr = max(0.0, min(1.0, float(pass_rate)))
-        correctness = pr if correctness is None else max(correctness, pr)
+    correctness_values = [
+        value
+        for value in (
+            quality_score,
+            pass_rate,
+            terminal_accuracy,
+            completion_rate,
+            terminal_tool_completion_rate,
+            tool_success_rate,
+        )
+        if isinstance(value, (int, float))
+    ]
+    if correctness_values:
+        correctness = max(max(0.0, min(1.0, float(value))) for value in correctness_values)
 
     # Speed component: tokens/sec (up to 0.5) + TTFT bands (up to 0.5), in [0, 1].
     speed = 0.0

@@ -97,7 +97,16 @@ role:
     min_context: 8192
     require_loaded: false
     fallback_roles: ["general_assistant"]
+    guardrail_profile: "none"         # none | forge_proxy | forge_middleware | native_light
+    tool_mode: "auto"                 # auto | native | prompt | none
+    force_respond_tool: false
+    context_budget_mode: "auto"       # auto | upstream | conservative
+    agentic_benchmark_workloads: []
 ```
+
+Forge-backed agentic roles can set `guardrail_profile: "forge_proxy"` to prefer
+services whose runtime metadata identifies a Forge proxy. See
+`docs/forge_integration.md`.
 
 ## Request Shape Policy
 

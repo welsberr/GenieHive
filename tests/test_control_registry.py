@@ -143,6 +143,68 @@ def test_registry_persists_roles_and_resolves_direct_and_role_routes(tmp_path: P
     assert asset["geniehive"]["effective_request_policy"]["body_defaults"]["chat_template_kwargs"]["enable_thinking"] is False
 
 
+def test_forge_guardrail_role_prefers_forge_proxy_service(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/plain-qwen",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18091",
+                    runtime={"engine": "llama.cpp", "launcher": "external"},
+                    assets=[{"asset_id": "qwen3-8b-q4km", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 450, "tokens_per_sec": 40},
+                ),
+                RegisteredService(
+                    service_id="atlas-01/chat/forge-qwen",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18081",
+                    runtime={"engine": "forge-proxy", "launcher": "forge"},
+                    assets=[{"asset_id": "qwen3-8b-forge", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 1200, "tokens_per_sec": 28},
+                ),
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="tool_user",
+                display_name="Tool User",
+                description="Reliable local agentic tool-use route",
+                operation="chat",
+                modality="text",
+                routing_policy={
+                    "preferred_families": ["qwen3"],
+                    "guardrail_profile": "forge_proxy",
+                    "tool_mode": "auto",
+                    "force_respond_tool": True,
+                    "agentic_benchmark_workloads": ["agentic.tool_use"],
+                },
+            )
+        ]
+    )
+
+    resolved = registry.resolve_route("tool_user")
+    assert resolved is not None
+    assert resolved["service"]["service_id"] == "atlas-01/chat/forge-qwen"
+    assert resolved["role"]["routing_policy"]["guardrail_profile"] == "forge_proxy"
+
+    matched = registry.match_routes(
+        RouteMatchRequest(task="multi-step agentic tool use with required function calls", workload="agentic.tool_use")
+    )
+    top = matched["candidates"][0]
+    assert top["candidate_id"] == "tool_user"
+    assert top["signals"]["guardrail_profile_match"] == 1.0
+
+
 def test_control_app_exposes_expected_routes() -> None:
     app = create_app()
     paths = {route.path for route in app.routes}
@@ -599,6 +661,10 @@ def test_benchmark_quality_score_stays_bounded_and_weighted() -> None:
 
     # Empty results return 0.
     assert _benchmark_quality_score({}) == 0.0
+
+    # Forge-style agentic workflow metrics count as correctness signals.
+    agentic = _benchmark_quality_score({"terminal_accuracy": 0.9, "completion_rate": 0.8})
+    assert agentic > 0.5
 
     # No stacking: pass_rate=1.0 alone should not score above 1.0 when speed is added.
     perfect_correct = _benchmark_quality_score({"pass_rate": 1.0})

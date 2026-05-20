@@ -1,0 +1,43 @@
+roles:
+  - role_id: "tool_user"
+    display_name: "Tool User"
+    description: "Reliable local route for tool-calling and multi-step agentic workflows"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Use available tools deliberately. Prefer structured tool calls when a tool is relevant, and return concise final answers."
+      request_policy:
+        body_defaults:
+          temperature: 0.2
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      require_loaded: true
+      guardrail_profile: "forge_proxy"
+      tool_mode: "auto"
+      force_respond_tool: true
+      context_budget_mode: "upstream"
+      agentic_benchmark_workloads:
+        - "agentic.tool_use"
+        - "agentic.required_steps"
+        - "agentic.compaction"
+
+  - role_id: "coding_agent"
+    display_name: "Coding Agent"
+    description: "Local coding assistant route for clients that use OpenAI-compatible tool calls"
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Help with code changes using tool calls when available. Be explicit about failures and uncertainty."
+      request_policy:
+        body_defaults:
+          temperature: 0.1
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      require_loaded: true
+      guardrail_profile: "forge_proxy"
+      tool_mode: "auto"
+      force_respond_tool: true
+      context_budget_mode: "upstream"
+      agentic_benchmark_workloads:
+        - "agentic.tool_use"
+        - "agentic.coding"
