@@ -698,7 +698,10 @@ class Registry:
             family_match = 0
             if preferred_families:
                 asset_names = " ".join(asset.get("asset_id", "") for asset in service["assets"]).lower()
-                family_match = 1 if any(family in asset_names for family in preferred_families) else 0
+                for index, family in enumerate(preferred_families):
+                    if family in asset_names:
+                        family_match = len(preferred_families) - index
+                        break
             latency = service["observed"].get("p50_latency_ms")
             latency_score = float(latency) if latency is not None else float("inf")
             return (guardrail_match, family_match, loaded, -latency_score, service["service_id"])
@@ -707,6 +710,12 @@ class Registry:
             loaded_candidates = [service for service in candidates if any(asset.get("loaded") for asset in service["assets"])]
             if loaded_candidates:
                 candidates = loaded_candidates
+
+        if preferred_families:
+            best_family_match = max((score(service)[1] for service in candidates), default=0)
+            preferred_candidates = [service for service in candidates if score(service)[1] == best_family_match and best_family_match > 0]
+            if preferred_candidates:
+                candidates = preferred_candidates
 
         if self._routing_strategy == "round_robin":
             rr_key = requested_model

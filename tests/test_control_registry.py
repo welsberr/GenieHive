@@ -205,6 +205,96 @@ def test_forge_guardrail_role_prefers_forge_proxy_service(tmp_path: Path) -> Non
     assert top["signals"]["guardrail_profile_match"] == 1.0
 
 
+def test_round_robin_role_routes_only_highest_preferred_family(tmp_path: Path) -> None:
+    db_path = tmp_path / "geniehive.sqlite3"
+    registry = Registry(db_path, routing_strategy="round_robin")
+
+    registry.register_host(
+        HostRegistration(
+            host_id="translation-cluster",
+            address="127.0.0.1",
+            services=[
+                RegisteredService(
+                    service_id="gorlim/chat/qwen35-gpu0",
+                    host_id="translation-cluster",
+                    kind="chat",
+                    endpoint="http://127.0.0.1:19101",
+                    assets=[{"asset_id": "Qwen3.5-9B-Q5_K_M", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 1050, "tokens_per_sec": 41},
+                ),
+                RegisteredService(
+                    service_id="gorlim/chat/qwen35-gpu1",
+                    host_id="translation-cluster",
+                    kind="chat",
+                    endpoint="http://127.0.0.1:19102",
+                    assets=[{"asset_id": "Qwen3.5-9B-Q5_K_M", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 1050, "tokens_per_sec": 41},
+                ),
+                RegisteredService(
+                    service_id="p40-box/chat/qwen35-gpu0",
+                    host_id="translation-cluster",
+                    kind="chat",
+                    endpoint="http://127.0.0.1:19191",
+                    assets=[{"asset_id": "Qwen3.5-9B-Q5_K_S", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 1000, "tokens_per_sec": 30},
+                ),
+                RegisteredService(
+                    service_id="p40-box/chat/qwen35-gpu1",
+                    host_id="translation-cluster",
+                    kind="chat",
+                    endpoint="http://127.0.0.1:19192",
+                    assets=[{"asset_id": "Qwen3.5-9B-Q5_K_S", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 1000, "tokens_per_sec": 30},
+                ),
+                RegisteredService(
+                    service_id="gorlim/chat/qwen3-8b",
+                    host_id="translation-cluster",
+                    kind="chat",
+                    endpoint="http://127.0.0.1:19091",
+                    assets=[{"asset_id": "Qwen3-8B-Q5_K_M", "loaded": True}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 900, "tokens_per_sec": 33},
+                ),
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="scientific_translator",
+                display_name="Scientific Translator",
+                operation="chat",
+                modality="text",
+                routing_policy={
+                    "preferred_families": ["qwen3.5-9b", "qwen3.5", "qwen3-8b", "qwen3"],
+                    "require_loaded": True,
+                },
+            )
+        ]
+    )
+
+    service_ids = [
+        registry.resolve_route("scientific_translator")["service"]["service_id"]
+        for _ in range(8)
+    ]
+
+    assert service_ids == [
+        "gorlim/chat/qwen35-gpu0",
+        "gorlim/chat/qwen35-gpu1",
+        "p40-box/chat/qwen35-gpu0",
+        "p40-box/chat/qwen35-gpu1",
+        "gorlim/chat/qwen35-gpu0",
+        "gorlim/chat/qwen35-gpu1",
+        "p40-box/chat/qwen35-gpu0",
+        "p40-box/chat/qwen35-gpu1",
+    ]
+    assert "gorlim/chat/qwen3-8b" not in service_ids
+
+
 def test_control_app_exposes_expected_routes() -> None:
     app = create_app()
     paths = {route.path for route in app.routes}

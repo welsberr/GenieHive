@@ -1,6 +1,6 @@
 node:
   host_id: "p40-box"
-  display_name: "Dual P40 + CPU Fallback"
+  display_name: "Dual P40 Qwen3.5 scientific translators"
   listen_host: "127.0.0.1"
   listen_port: 8891
   address: "127.0.0.1"
@@ -31,31 +31,13 @@ managed_runtimes:
 services:
   - service_id: "p40-box/chat/gpu0-primary"
     kind: "chat"
-    endpoint: "http://127.0.0.1:18091"
+    endpoint: "http://127.0.0.1:19191"
     runtime:
       engine: "llama.cpp"
       launcher: "external"
       device: "gpu0"
     assets:
-      - asset_id: "Qwen2.5-14B-Instruct-1M-Q5_K_M"
-        loaded: true
-    state:
-      health: "healthy"
-      load_state: "loaded"
-      accept_requests: true
-    observed:
-      p50_latency_ms: 1200
-      tokens_per_sec: 24
-
-  - service_id: "p40-box/chat/gpu1-secondary"
-    kind: "chat"
-    endpoint: "http://127.0.0.1:18092"
-    runtime:
-      engine: "llama.cpp"
-      launcher: "external"
-      device: "gpu1"
-    assets:
-      - asset_id: "Qwen3.5-9B-Q5_K_M"
+      - asset_id: "Qwen3.5-9B-Q5_K_S"
         loaded: true
     state:
       health: "healthy"
@@ -65,20 +47,20 @@ services:
       p50_latency_ms: 1000
       tokens_per_sec: 30
 
-  - service_id: "p40-box/chat/cpu-fallback"
+  - service_id: "p40-box/chat/gpu1-secondary"
     kind: "chat"
-    endpoint: "http://127.0.0.1:18093"
+    endpoint: "http://127.0.0.1:19192"
     runtime:
       engine: "llama.cpp"
       launcher: "external"
-      device: "cpu"
+      device: "gpu1"
     assets:
-      - asset_id: "rocket-3b.Q5_K_M"
+      - asset_id: "Qwen3.5-9B-Q5_K_S"
         loaded: true
     state:
       health: "healthy"
       load_state: "loaded"
       accept_requests: true
     observed:
-      p50_latency_ms: 4500
-      tokens_per_sec: 7
+      p50_latency_ms: 1000
+      tokens_per_sec: 30

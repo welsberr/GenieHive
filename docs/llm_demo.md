@@ -93,6 +93,44 @@ routing:
 When Ollama discovery is enabled, `loaded_model_count` and `vram_used_bytes`
 are available in `observed` and visible via `GET /v1/cluster/services`.
 
+`round_robin` is useful for homogeneous role pools. For role routes with an
+ordered `preferred_families` list, GenieHive first restricts candidates to the
+highest-priority preferred family that has healthy eligible services, then
+applies the selected strategy. This keeps lower-priority fallback models out of
+the schedule while the preferred family is available.
+
+### Real-world validation: scientific_translator
+
+The TalkOrigins Archive bibliography translation queue provided a live
+capability test for GenieHive role routing. Four concurrent queue workers sent
+OpenAI-compatible chat requests to one GenieHive control plane:
+
+```bash
+python ops/run_poc3_hybrid_queue_parallel.py \
+  --base-url http://127.0.0.1:8800 \
+  --api-key change-me-client-key \
+  --model scientific_translator \
+  --parallelism 4
+```
+
+The `scientific_translator` role was backed by four Qwen3.5 9B llama.cpp
+services across two hosts:
+
+- `gorlim/chat/scientific-translator-qwen35-mtp-gpu0`
+- `gorlim/chat/scientific-translator-qwen35-mtp-gpu1`
+- `p40-box/chat/gpu0-primary`
+- `p40-box/chat/gpu1-secondary`
+
+With `routing.default_strategy: round_robin`, repeated route resolution cycled
+only through those four Qwen3.5 services. Lower-priority fallback services such
+as Qwen3/Qwen2/Mistral remained available for degraded operation but were not
+selected while Qwen3.5 services were healthy and loaded.
+
+Operationally, this validates the intended client pattern: production batch
+tools should target the role (`model: scientific_translator`) through GenieHive
+instead of assigning work to hardcoded backend ports. GenieHive then owns
+service selection, health filtering, and fallback behavior.
+
 ### Ollama dynamic model discovery
 
 Add `discover_protocol: "ollama"` to any Ollama-backed service in your node

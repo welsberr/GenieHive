@@ -1,6 +1,6 @@
 # GenieHive Architecture
 
-Last updated: 2026-04-27
+Last updated: 2026-06-04
 
 ## Mission
 
@@ -68,8 +68,22 @@ preference). The same role can route to different services as cluster state chan
 ### Route Resolution
 
 1. If `model` matches a loaded, healthy asset or service alias → route directly.
-2. If `model` matches a known role → score eligible services and route to the best.
+2. If `model` matches a known role → filter by role policy and route by strategy.
 3. Otherwise → fail with a clear 404.
+
+Role routing applies these gates before a scheduling strategy is used:
+
+- operation/kind match
+- healthy service state and `accept_requests`
+- `require_loaded`, if set
+- `min_context`, if set
+- ordered `preferred_families`, if set
+
+`preferred_families` is ordered by priority. When at least one healthy eligible
+service matches a preferred family, GenieHive restricts the candidate set to the
+highest-priority matching family before applying `scored`, `round_robin`, or
+`least_loaded`. Lower-priority families remain fallbacks, not co-equal members
+of the active pool.
 
 ---
 
@@ -81,7 +95,7 @@ Client POST /v1/chat/completions
   ▼
 resolve_route(model, kind="chat")
   ├─ direct: asset_id or service alias match
-  └─ role: filter by kind/health → score by runtime + benchmark signals
+  └─ role: filter by kind/health/policy → schedule among eligible services
   │
   ▼
 apply_request_policy(request, asset, role)
@@ -121,6 +135,24 @@ Route scoring combines three signal families:
 **Benchmark signals** (from ingested workload runs):
 - Workload overlap score (Jaccard-style token overlap)
 - Quality score from results: `0.45 * overlap + 0.55 * quality`
+
+## Scheduling Strategies
+
+`routing.default_strategy` controls selection after eligibility filtering:
+
+- `scored`: pick the highest scoring service using runtime, benchmark, text, and
+  role-family signals.
+- `round_robin`: cycle across the filtered candidate set. This is appropriate
+  for homogeneous worker pools such as multiple instances of the same model
+  family serving one batch role.
+- `least_loaded`: pick the service with the lowest `queue_depth + in_flight`.
+
+In June 2026, the `scientific_translator` role was used by the TalkOrigins
+Archive translation queue as a live four-worker capability test. The role
+advertised Qwen3.5 as its first preferred family and lower-priority model
+families as fallbacks. With `round_robin`, GenieHive cycled across four healthy
+Qwen3.5 9B services on `gorlim` and `p40-box`, while excluding healthy Qwen3
+fallback services from the active schedule until they were actually needed.
 
 ---
 
