@@ -12,6 +12,8 @@ host:
   labels:
     site: "home-lab"
     class: "gpu"
+    trust_tier: "trusted_datacenter"
+    device_class: "gpu_server"
   capabilities:
     cuda: true
     rocm: false
@@ -19,6 +21,12 @@ host:
   resources:
     cpu_threads: 24
     ram_gb: 128
+    contribution_policy:
+      max_ram_gb: 96
+      idle_only: false
+      ac_power_only: false
+      workload_classes: ["interactive", "background"]
+      allowed_model_families: ["qwen3", "mistral"]
     gpus:
       - gpu_id: "cuda:0"
         name: "RTX 4090"
@@ -45,6 +53,7 @@ service:
   assets:
     - asset_id: "qwen3-8b-q4km"
       loaded: true
+      context_size: 32768
       request_policy:
         body_defaults:
           chat_template_kwargs:
@@ -52,7 +61,9 @@ service:
   state:
     health: "healthy"
     load_state: "loaded"
+    availability: "available"         # available | busy | draining | paused_by_user | offline | quarantined
     accept_requests: true
+    allow_employee_direct_requests: false
   observed:
     p50_latency_ms: 920
     p95_latency_ms: 1900
@@ -96,6 +107,13 @@ role:
     preferred_labels: ["instruction", "stable"]
     min_context: 8192
     require_loaded: false
+    allow_employee_devices: false
+    allowed_trust_tiers: []
+    denied_trust_tiers: ["personal_device"]
+    allowed_device_classes: []
+    denied_device_classes: []
+    allowed_workload_classes: []
+    denied_workload_classes: []
     fallback_roles: ["general_assistant"]
     guardrail_profile: "none"         # none | forge_proxy | forge_middleware | native_light
     tool_mode: "auto"                 # auto | native | prompt | none

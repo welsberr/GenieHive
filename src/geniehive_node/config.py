@@ -29,6 +29,14 @@ class InventoryConfig(BaseModel):
     model_roots: list[str] = Field(default_factory=list)
     cpu_threads: int | None = None
     ram_gb: float | None = None
+    max_contribution_ram_gb: float | None = None
+    trust_tier: str | None = None
+    device_class: str | None = None
+    workload_classes: list[str] = Field(default_factory=list)
+    allowed_model_families: list[str] = Field(default_factory=list)
+    idle_only: bool = False
+    ac_power_only: bool = False
+    thermal_ceiling_c: float | None = None
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
 
@@ -40,6 +48,8 @@ class ManagedRuntimesConfig(BaseModel):
 class NodeServiceAssetConfig(BaseModel):
     asset_id: str
     loaded: bool = False
+    context_size: int | None = None
+    max_context_tokens: int | None = None
 
 
 class NodeServiceConfig(BaseModel):

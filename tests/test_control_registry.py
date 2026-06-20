@@ -295,6 +295,249 @@ def test_round_robin_role_routes_only_highest_preferred_family(tmp_path: Path) -
     assert "gorlim/chat/qwen3-8b" not in service_ids
 
 
+def test_employee_device_nodes_are_role_opt_in_and_not_direct_by_default(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="macbook-ada",
+            display_name="Ada MacBook Pro",
+            address="100.64.10.42",
+            labels={"trust_tier": "employee_device", "device_class": "apple_silicon_mac"},
+            capabilities={"metal": True},
+            resources={
+                "ram_gb": 64,
+                "trust_tier": "employee_device",
+                "device_class": "apple_silicon_mac",
+                "contribution_policy": {
+                    "max_ram_gb": 24,
+                    "idle_only": True,
+                    "ac_power_only": True,
+                    "workload_classes": ["background", "low_priority"],
+                    "allowed_model_families": ["qwen2.5", "llama3"],
+                },
+            },
+            services=[
+                RegisteredService(
+                    service_id="macbook-ada/chat/qwen-small",
+                    host_id="macbook-ada",
+                    kind="chat",
+                    endpoint="http://100.64.10.42:11434/v1",
+                    runtime={"engine": "ollama", "launcher": "user-agent", "context_size": 8192},
+                    assets=[{"asset_id": "qwen2.5-7b-instruct-q4", "loaded": True, "context_size": 8192}],
+                    state={"health": "healthy", "load_state": "loaded", "accept_requests": True},
+                    observed={"p50_latency_ms": 1800, "tokens_per_sec": 18},
+                )
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="standard_assistant",
+                display_name="Standard Assistant",
+                operation="chat",
+                modality="text",
+                routing_policy={"preferred_families": ["qwen2.5"]},
+            ),
+            RoleProfile(
+                role_id="mac_background_assistant",
+                display_name="Mac Background Assistant",
+                operation="chat",
+                modality="text",
+                routing_policy={
+                    "preferred_families": ["qwen2.5"],
+                    "allow_employee_devices": True,
+                    "allowed_device_classes": ["apple_silicon_mac"],
+                    "allowed_workload_classes": ["background"],
+                    "min_context": 4096,
+                },
+            ),
+        ]
+    )
+
+    standard = registry.resolve_route("standard_assistant")
+    assert standard is not None
+    assert standard["service"] is None
+
+    opted_in = registry.resolve_route("mac_background_assistant")
+    assert opted_in is not None
+    assert opted_in["service"]["service_id"] == "macbook-ada/chat/qwen-small"
+
+    direct = registry.resolve_route("qwen2.5-7b-instruct-q4")
+    assert direct is None
+
+    model_ids = {item["id"] for item in registry.list_client_models()}
+    assert "qwen2.5-7b-instruct-q4" not in model_ids
+    assert "mac_background_assistant" in model_ids
+
+
+def test_employee_device_direct_addressing_requires_explicit_service_opt_in(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="macbook-ada",
+            address="100.64.10.42",
+            labels={"trust_tier": "employee_device", "device_class": "apple_silicon_mac"},
+            services=[
+                RegisteredService(
+                    service_id="macbook-ada/chat/qwen-small",
+                    host_id="macbook-ada",
+                    kind="chat",
+                    endpoint="http://100.64.10.42:11434/v1",
+                    assets=[{"asset_id": "qwen2.5-7b-instruct-q4", "loaded": True}],
+                    state={
+                        "health": "healthy",
+                        "load_state": "loaded",
+                        "accept_requests": True,
+                        "allow_employee_direct_requests": True,
+                    },
+                    observed={"p50_latency_ms": 1800},
+                )
+            ],
+        )
+    )
+
+    direct = registry.resolve_route("qwen2.5-7b-instruct-q4")
+    assert direct is not None
+    assert direct["service"]["service_id"] == "macbook-ada/chat/qwen-small"
+
+
+def test_node_allowed_model_families_constrain_routing(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="macbook-ada",
+            address="100.64.10.42",
+            labels={"trust_tier": "employee_device", "device_class": "apple_silicon_mac"},
+            resources={"contribution_policy": {"allowed_model_families": ["qwen2.5"], "workload_classes": ["background"]}},
+            services=[
+                RegisteredService(
+                    service_id="macbook-ada/chat/llama",
+                    host_id="macbook-ada",
+                    kind="chat",
+                    endpoint="http://100.64.10.42:11434/v1",
+                    assets=[{"asset_id": "llama3.2-3b-instruct", "loaded": True}],
+                    state={"health": "healthy", "accept_requests": True},
+                    observed={"p50_latency_ms": 1300},
+                )
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="mac_background_assistant",
+                display_name="Mac Background Assistant",
+                operation="chat",
+                modality="text",
+                routing_policy={
+                    "preferred_families": ["llama3"],
+                    "allow_employee_devices": True,
+                    "allowed_device_classes": ["apple_silicon_mac"],
+                    "allowed_workload_classes": ["background"],
+                },
+            )
+        ]
+    )
+
+    resolved = registry.resolve_route("mac_background_assistant")
+    assert resolved is not None
+    assert resolved["service"] is None
+
+
+def test_draining_services_do_not_receive_new_routes(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/draining",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18091",
+                    assets=[{"asset_id": "qwen3-draining", "loaded": True}],
+                    state={"health": "healthy", "availability": "draining", "accept_requests": True},
+                    observed={"p50_latency_ms": 700},
+                ),
+                RegisteredService(
+                    service_id="atlas-01/chat/available",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18092",
+                    assets=[{"asset_id": "qwen3-available", "loaded": True}],
+                    state={"health": "healthy", "availability": "available", "accept_requests": True},
+                    observed={"p50_latency_ms": 1200},
+                ),
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="assistant",
+                display_name="Assistant",
+                operation="chat",
+                modality="text",
+                routing_policy={"preferred_families": ["qwen3"]},
+            )
+        ]
+    )
+
+    resolved = registry.resolve_route("assistant")
+    assert resolved is not None
+    assert resolved["service"]["service_id"] == "atlas-01/chat/available"
+
+    direct = registry.resolve_route("qwen3-draining")
+    assert direct is None
+
+
+def test_min_context_filters_underpowered_services(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "geniehive.sqlite3")
+    registry.register_host(
+        HostRegistration(
+            host_id="atlas-01",
+            address="192.168.1.101",
+            services=[
+                RegisteredService(
+                    service_id="atlas-01/chat/small-context",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18091",
+                    assets=[{"asset_id": "qwen3-small-context", "loaded": True, "context_size": 4096}],
+                    state={"health": "healthy", "accept_requests": True},
+                    observed={"p50_latency_ms": 600},
+                ),
+                RegisteredService(
+                    service_id="atlas-01/chat/large-context",
+                    host_id="atlas-01",
+                    kind="chat",
+                    endpoint="http://192.168.1.101:18092",
+                    assets=[{"asset_id": "qwen3-large-context", "loaded": True, "context_size": 32768}],
+                    state={"health": "healthy", "accept_requests": True},
+                    observed={"p50_latency_ms": 1200},
+                ),
+            ],
+        )
+    )
+    registry.upsert_roles(
+        [
+            RoleProfile(
+                role_id="long_context_assistant",
+                display_name="Long Context Assistant",
+                operation="chat",
+                modality="text",
+                routing_policy={"preferred_families": ["qwen3"], "min_context": 8192},
+            )
+        ]
+    )
+
+    resolved = registry.resolve_route("long_context_assistant")
+    assert resolved is not None
+    assert resolved["service"]["service_id"] == "atlas-01/chat/large-context"
+
+
 def test_control_app_exposes_expected_routes() -> None:
     app = create_app()
     paths = {route.path for route in app.routes}

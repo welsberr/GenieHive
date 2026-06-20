@@ -22,6 +22,8 @@ def _write_demo_files(tmp_path: Path) -> tuple[Path, Path, Path]:
                 '    modality: "text"',
                 "    routing_policy:",
                 '      preferred_families: ["qwen3"]',
+                "      allow_employee_devices: true",
+                '      allowed_device_classes: ["apple_silicon_mac"]',
             ]
         )
     )
@@ -57,6 +59,13 @@ def _write_demo_files(tmp_path: Path) -> tuple[Path, Path, Path]:
                 '  node_api_key: "node-key"',
                 "inventory:",
                 f'  model_roots:\n    - "{models_dir}"',
+                '  trust_tier: "employee_device"',
+                '  device_class: "apple_silicon_mac"',
+                "  max_contribution_ram_gb: 24",
+                "  workload_classes:",
+                '    - "background"',
+                "  idle_only: true",
+                "  ac_power_only: true",
                 "  capabilities:",
                 "    cuda: true",
                 "services:",
@@ -86,6 +95,12 @@ def test_demo_flow_registers_node_and_resolves_role(tmp_path: Path) -> None:
 
     registration = build_registration_payload(node_cfg)
     heartbeat = build_heartbeat_payload(node_cfg)
+    assert registration["resources"]["trust_tier"] == "employee_device"
+    assert registration["resources"]["device_class"] == "apple_silicon_mac"
+    assert registration["resources"]["contribution_policy"]["max_ram_gb"] == 24
+    assert registration["resources"]["contribution_policy"]["workload_classes"] == ["background"]
+    assert registration["resources"]["contribution_policy"]["idle_only"] is True
+    assert registration["resources"]["contribution_policy"]["ac_power_only"] is True
 
     host = registry.register_host(HostRegistration.model_validate(registration))
     assert host["host_id"] == "atlas-01"

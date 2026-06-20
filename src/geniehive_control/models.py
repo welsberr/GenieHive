@@ -14,18 +14,24 @@ class RequestShapePolicy(BaseModel):
 class ServiceAsset(BaseModel):
     asset_id: str
     loaded: bool = False
+    context_size: int | None = None
+    max_context_tokens: int | None = None
     request_policy: RequestShapePolicy = Field(default_factory=RequestShapePolicy)
 
 
 class ServiceRuntime(BaseModel):
     engine: str | None = None
     launcher: str | None = None
+    context_size: int | None = None
+    max_context_tokens: int | None = None
 
 
 class ServiceState(BaseModel):
     health: str | None = None
     load_state: str | None = None
+    availability: Literal["available", "busy", "draining", "paused_by_user", "offline", "quarantined"] = "available"
     accept_requests: bool = True
+    allow_employee_direct_requests: bool = False
 
 
 class ServiceObserved(BaseModel):
@@ -36,6 +42,7 @@ class ServiceObserved(BaseModel):
     in_flight: int | None = None
     loaded_model_count: int | None = None
     vram_used_bytes: int | None = None
+    max_context_tokens: int | None = None
 
 
 class RegisteredService(BaseModel):
@@ -83,6 +90,13 @@ class RoutingPolicy(BaseModel):
     preferred_labels: list[str] = Field(default_factory=list)
     min_context: int | None = None
     require_loaded: bool = False
+    allow_employee_devices: bool = False
+    allowed_trust_tiers: list[str] = Field(default_factory=list)
+    denied_trust_tiers: list[str] = Field(default_factory=list)
+    allowed_device_classes: list[str] = Field(default_factory=list)
+    denied_device_classes: list[str] = Field(default_factory=list)
+    allowed_workload_classes: list[str] = Field(default_factory=list)
+    denied_workload_classes: list[str] = Field(default_factory=list)
     fallback_roles: list[str] = Field(default_factory=list)
     guardrail_profile: Literal["none", "forge_proxy", "forge_middleware", "native_light"] = "none"
     tool_mode: Literal["auto", "native", "prompt", "none"] = "auto"

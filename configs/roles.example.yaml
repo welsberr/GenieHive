@@ -8,6 +8,7 @@ roles:
     routing_policy:
       preferred_families: ["Qwen3", "Mistral"]
       min_context: 8192
+      denied_trust_tiers: ["employee_device", "personal_device"]
 
   - role_id: "scientific_translator"
     display_name: "Scientific Translator"
@@ -23,6 +24,7 @@ roles:
       preferred_families: ["Qwen3", "Mistral", "Llama"]
       min_context: 8192
       require_loaded: true
+      allowed_trust_tiers: ["trusted_datacenter", "managed_cloud"]
 
   - role_id: "embedder"
     display_name: "Embedder"
@@ -30,6 +32,23 @@ roles:
     modality: "text"
     routing_policy:
       require_loaded: true
+
+  - role_id: "mac_background_assistant"
+    display_name: "Mac Background Assistant"
+    description: "Low-priority background route that may use opted-in Apple Silicon employee devices."
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: "Handle background assistance tasks concisely."
+      request_policy:
+        body_defaults:
+          temperature: 0.2
+    routing_policy:
+      preferred_families: ["Qwen2.5", "Llama3"]
+      allow_employee_devices: true
+      allowed_device_classes: ["apple_silicon_mac"]
+      allowed_workload_classes: ["background", "low_priority"]
+      min_context: 4096
 
   - role_id: "transcriber"
     display_name: "Transcriber"

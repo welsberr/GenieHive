@@ -31,7 +31,19 @@ def build_inventory(cfg: NodeConfig) -> NodeInventory:
         resources["cpu_threads"] = cfg.inventory.cpu_threads
     if cfg.inventory.ram_gb is not None:
         resources["ram_gb"] = cfg.inventory.ram_gb
+    if cfg.inventory.trust_tier:
+        resources["trust_tier"] = cfg.inventory.trust_tier
+    if cfg.inventory.device_class:
+        resources["device_class"] = cfg.inventory.device_class
     resources["discovered_models"] = discover_model_files(cfg.inventory.model_roots)
+    resources["contribution_policy"] = {
+        "max_ram_gb": cfg.inventory.max_contribution_ram_gb,
+        "idle_only": cfg.inventory.idle_only,
+        "ac_power_only": cfg.inventory.ac_power_only,
+        "thermal_ceiling_c": cfg.inventory.thermal_ceiling_c,
+        "allowed_model_families": cfg.inventory.allowed_model_families,
+        "workload_classes": cfg.inventory.workload_classes,
+    }
 
     services: list[dict] = []
     for service in cfg.services:

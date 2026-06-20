@@ -10,6 +10,10 @@ from .models import BenchmarkSample, HostHeartbeat, HostRegistration, Registered
 from .request_policy import effective_chat_request_policy, select_target_asset
 
 
+EMPLOYEE_DEVICE_TRUST_TIERS = {"employee_device", "personal_device"}
+NON_ROUTABLE_AVAILABILITY_STATES = {"draining", "paused_by_user", "offline", "quarantined"}
+
+
 def _json_dumps(value: object) -> str:
     return json.dumps(value, sort_keys=True)
 
@@ -35,6 +39,69 @@ def _service_matches_guardrail_profile(service: dict | None, guardrail_profile: 
     if guardrail_profile == "forge_middleware":
         return "forge" in service_text or "guardrail" in service_text
     return False
+
+
+def _normalize_string_set(values: list[str] | tuple[str, ...] | set[str] | None) -> set[str]:
+    return {str(value).strip().lower() for value in values or [] if str(value).strip()}
+
+
+def _host_metadata_value(host: dict | None, key: str) -> str | None:
+    if host is None:
+        return None
+    labels = host.get("labels") or {}
+    resources = host.get("resources") or {}
+    contribution_policy = resources.get("contribution_policy") or {}
+    value = labels.get(key) or resources.get(key) or contribution_policy.get(key)
+    return str(value).strip().lower() if value else None
+
+
+def _host_workload_classes(host: dict | None) -> set[str]:
+    if host is None:
+        return set()
+    labels = host.get("labels") or {}
+    resources = host.get("resources") or {}
+    contribution_policy = resources.get("contribution_policy") or {}
+    values = contribution_policy.get("workload_classes") or resources.get("workload_classes") or labels.get("workload_class")
+    if isinstance(values, str):
+        return _normalize_string_set([values])
+    if isinstance(values, (list, tuple, set)):
+        return _normalize_string_set(values)
+    return set()
+
+
+def _host_allowed_model_families(host: dict | None) -> set[str]:
+    if host is None:
+        return set()
+    resources = host.get("resources") or {}
+    contribution_policy = resources.get("contribution_policy") or {}
+    values = contribution_policy.get("allowed_model_families") or resources.get("allowed_model_families")
+    if isinstance(values, str):
+        return _normalize_string_set([values])
+    if isinstance(values, (list, tuple, set)):
+        return _normalize_string_set(values)
+    return set()
+
+
+def _service_matches_any_family(service: dict, families: set[str]) -> bool:
+    if not families:
+        return True
+    service_text = " ".join(
+        [
+            service.get("service_id", ""),
+            " ".join(str(asset.get("asset_id", "")) for asset in service.get("assets") or []),
+            " ".join(str(value) for value in (service.get("runtime") or {}).values() if value),
+        ]
+    ).lower()
+    return any(family in service_text for family in families)
+
+
+def _service_accepts_new_work(service: dict) -> bool:
+    state = service.get("state") or {}
+    if not state.get("accept_requests", True):
+        return False
+    if state.get("health") != "healthy":
+        return False
+    return str(state.get("availability") or "available") not in NON_ROUTABLE_AVAILABILITY_STATES
 
 
 class Registry:
@@ -584,9 +651,7 @@ class Registry:
         items: list[dict] = []
 
         for service in services:
-            if not service["state"].get("accept_requests", True):
-                continue
-            if service["state"].get("health") != "healthy":
+            if not self._service_allowed_for_direct(service):
                 continue
             item = {
                 "id": service["service_id"],
@@ -613,8 +678,7 @@ class Registry:
                 service
                 for service in services
                 if service["kind"] == role["operation"]
-                and service["state"].get("accept_requests", True)
-                and service["state"].get("health") == "healthy"
+                and self._service_allowed_for_role(service, role)
             ]
             loaded_count = sum(1 for service in matching_services if any(asset.get("loaded") for asset in service["assets"]))
             latencies = [
@@ -671,8 +735,7 @@ class Registry:
             service
             for service in self.list_services()
             if service["kind"] == matched_kind
-            and service["state"].get("accept_requests", True)
-            and service["state"].get("health") == "healthy"
+            and self._service_allowed_for_role(service, role)
         ]
         if not candidates:
             visited: set[str] = _visited if _visited is not None else {requested_model}
@@ -744,8 +807,7 @@ class Registry:
             service
             for service in self.list_services()
             if (kind is None or service["kind"] == kind)
-            and service["state"].get("accept_requests", True)
-            and service["state"].get("health") == "healthy"
+            and self._service_allowed_for_direct(service)
         ]
         roles = [
             role
@@ -783,14 +845,66 @@ class Registry:
             "candidates": candidates[:limit],
         }
 
+    def _service_allowed_for_direct(self, service: dict) -> bool:
+        if not _service_accepts_new_work(service):
+            return False
+        host = self.get_host(service["host_id"])
+        trust_tier = _host_metadata_value(host, "trust_tier")
+        if not _service_matches_any_family(service, _host_allowed_model_families(host)):
+            return False
+        if trust_tier in EMPLOYEE_DEVICE_TRUST_TIERS:
+            return bool((service.get("state") or {}).get("allow_employee_direct_requests"))
+        return True
+
+    def _service_allowed_for_role(self, service: dict, role: dict) -> bool:
+        if not _service_accepts_new_work(service):
+            return False
+
+        host = self.get_host(service["host_id"])
+        policy = role.get("routing_policy") or {}
+        trust_tier = _host_metadata_value(host, "trust_tier")
+        device_class = _host_metadata_value(host, "device_class")
+        workload_classes = _host_workload_classes(host)
+        if not _service_matches_any_family(service, _host_allowed_model_families(host)):
+            return False
+
+        allowed_trust = _normalize_string_set(policy.get("allowed_trust_tiers"))
+        denied_trust = _normalize_string_set(policy.get("denied_trust_tiers"))
+        if trust_tier and trust_tier in denied_trust:
+            return False
+        if allowed_trust and trust_tier not in allowed_trust:
+            return False
+        if trust_tier in EMPLOYEE_DEVICE_TRUST_TIERS and not policy.get("allow_employee_devices") and trust_tier not in allowed_trust:
+            return False
+
+        allowed_devices = _normalize_string_set(policy.get("allowed_device_classes"))
+        denied_devices = _normalize_string_set(policy.get("denied_device_classes"))
+        if device_class and device_class in denied_devices:
+            return False
+        if allowed_devices and device_class not in allowed_devices:
+            return False
+
+        allowed_workloads = _normalize_string_set(policy.get("allowed_workload_classes"))
+        denied_workloads = _normalize_string_set(policy.get("denied_workload_classes"))
+        if workload_classes & denied_workloads:
+            return False
+        if allowed_workloads and not workload_classes & allowed_workloads:
+            return False
+
+        min_context = policy.get("min_context")
+        if isinstance(min_context, int):
+            max_context = self._service_max_context(service)
+            if max_context is not None and max_context < min_context:
+                return False
+
+        return True
+
     def _resolve_direct(self, requested_model: str, *, kind: str | None = None) -> dict | None:
         candidates = []
         for service in self.list_services():
             if kind is not None and service["kind"] != kind:
                 continue
-            if not service["state"].get("accept_requests", True):
-                continue
-            if service["state"].get("health") != "healthy":
+            if not self._service_allowed_for_direct(service):
                 continue
             asset_ids = {asset.get("asset_id") for asset in service["assets"]}
             if service["service_id"] == requested_model or requested_model in asset_ids:
@@ -807,6 +921,31 @@ class Registry:
         service = max(candidates, key=score)
         return {"service": service}
 
+    @staticmethod
+    def _service_max_context(service: dict) -> int | None:
+        values: list[int] = []
+        runtime = service.get("runtime") or {}
+        observed = service.get("observed") or {}
+        for value in (
+            runtime.get("context_size"),
+            runtime.get("max_context"),
+            runtime.get("max_context_tokens"),
+            observed.get("context_size"),
+            observed.get("max_context"),
+            observed.get("max_context_tokens"),
+        ):
+            if isinstance(value, int):
+                values.append(value)
+            elif isinstance(value, str) and value.isdigit():
+                values.append(int(value))
+        for asset in service.get("assets") or []:
+            for value in (asset.get("context_size"), asset.get("max_context"), asset.get("max_context_tokens")):
+                if isinstance(value, int):
+                    values.append(value)
+                elif isinstance(value, str) and value.isdigit():
+                    values.append(int(value))
+        return max(values) if values else None
+
     def _score_role_candidate(self, role: dict, service: dict | None, tasks: list[str], workloads: list[str]) -> dict:
         task_tokens = _tokenize_tasks(tasks)
         text_parts = [
@@ -816,6 +955,9 @@ class Registry:
             (role.get("prompt_policy") or {}).get("system_prompt", "") or "",
             " ".join((role.get("routing_policy") or {}).get("preferred_families", [])),
             " ".join((role.get("routing_policy") or {}).get("preferred_labels", [])),
+            " ".join((role.get("routing_policy") or {}).get("allowed_trust_tiers", [])),
+            " ".join((role.get("routing_policy") or {}).get("allowed_device_classes", [])),
+            " ".join((role.get("routing_policy") or {}).get("allowed_workload_classes", [])),
             str((role.get("routing_policy") or {}).get("guardrail_profile", "")),
             str((role.get("routing_policy") or {}).get("tool_mode", "")),
             " ".join((role.get("routing_policy") or {}).get("agentic_benchmark_workloads", [])),
@@ -863,10 +1005,14 @@ class Registry:
 
     def _score_service_candidate(self, service: dict, tasks: list[str], workloads: list[str]) -> dict:
         task_tokens = _tokenize_tasks(tasks)
+        host = self.get_host(service["host_id"])
         service_text = " ".join(
             [
                 service.get("service_id", ""),
                 service.get("host_id", ""),
+                _host_metadata_value(host, "trust_tier") or "",
+                _host_metadata_value(host, "device_class") or "",
+                " ".join(_host_workload_classes(host)),
                 " ".join(asset.get("asset_id", "") for asset in service.get("assets", [])),
                 " ".join(f"{key} {value}" for key, value in (service.get("runtime") or {}).items() if value),
             ]
@@ -904,9 +1050,13 @@ class Registry:
         tokens_per_sec = service["observed"].get("tokens_per_sec")
         queue_depth = service["observed"].get("queue_depth")
         loaded_model_count = service["observed"].get("loaded_model_count")
+        availability = str((service.get("state") or {}).get("availability") or "available")
 
         score = 0.0
         reasons: list[str] = []
+        if availability == "busy":
+            score -= 0.10
+            reasons.append("service reports busy availability")
         if loaded:
             score += 0.35
             reasons.append("service already has a loaded asset")
@@ -936,6 +1086,7 @@ class Registry:
             "tokens_per_sec": tokens_per_sec,
             "queue_depth": queue_depth,
             "loaded_model_count": loaded_model_count,
+            "availability": availability,
         }
 
     def _benchmark_signals(self, service: dict | None, tasks: list[str], workloads: list[str]) -> tuple[float, list[str], dict[str, object]]:
@@ -1020,6 +1171,7 @@ class Registry:
         lat = service["observed"].get("p50_latency_ms")
         loaded_count = 1 if any(asset.get("loaded") for asset in service["assets"]) else 0
         effective_requested_model = requested_model or service["service_id"]
+        host = self.get_host(service["host_id"])
         return {
             "route_type": "service",
             "service_id": service["service_id"],
@@ -1028,6 +1180,10 @@ class Registry:
             "protocol": service["protocol"],
             "endpoint": service["endpoint"],
             "health": service["state"].get("health"),
+            "availability": service["state"].get("availability", "available"),
+            "trust_tier": _host_metadata_value(host, "trust_tier"),
+            "device_class": _host_metadata_value(host, "device_class"),
+            "workload_classes": sorted(_host_workload_classes(host)),
             "loaded_asset_count": loaded_count,
             "assets": service["assets"],
             "runtime": service["runtime"],
