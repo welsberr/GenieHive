@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_GPU1="${MODEL_GPU1:-/home/netuser/bin/models/llm/Qwen3.5-9B-Q5_K_M.gguf}"
-LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/home/netuser/bin/llama.cpp/build/bin/llama-server}"
+MODEL_DIR="${MODEL_DIR:-/opt/models/llm}"
+MODEL_GPU1="${MODEL_GPU1:-${MODEL_DIR}/Qwen3.5-9B-Q5_K_M.gguf}"
+LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-llama-server}"
 HOST="${GPU1_HOST:-127.0.0.1}"
 PORT="${GPU1_PORT:-18092}"
 CTX_SIZE="${GPU1_CTX_SIZE:-4096}"

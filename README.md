@@ -42,7 +42,7 @@ This repository is intended as the clean successor to narrower local gateway exp
 Local development setup:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'

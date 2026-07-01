@@ -199,7 +199,7 @@ On the control-plane host:
 2. Start GenieHive control:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_control.sh
 ```
 
@@ -220,7 +220,7 @@ Expected result:
 If you are running control and node on the same machine, use:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_control_singlebox.sh
 ```
 
@@ -309,7 +309,7 @@ services:
 4. Start the node:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_node_singlebox.sh configs/node.singlebox.ollama.example.yaml
 ```
 
@@ -345,7 +345,7 @@ services:
 Then start the node:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_node_singlebox.sh configs/node.singlebox.llamacpp.example.yaml
 ```
 
@@ -386,7 +386,7 @@ services:
 Then start the node:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_node_singlebox.sh configs/node.singlebox.llamafile.example.yaml
 ```
 
@@ -487,7 +487,7 @@ curl -sS http://127.0.0.1:8800/v1/embeddings \
 Run:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 python scripts/demo_client_agent.py \
   --base-url http://127.0.0.1:8800 \
   --api-key change-me-client-key \
@@ -556,14 +556,14 @@ ollama pull nomic-embed-text
 3. Start GenieHive control:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_control_singlebox.sh
 ```
 
 4. Start GenieHive node:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_node_singlebox.sh configs/node.singlebox.ollama.example.yaml
 ```
 
@@ -593,14 +593,14 @@ llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 18091
 2. Start GenieHive control:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_control_singlebox.sh
 ```
 
 3. Start GenieHive node:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_node_singlebox.sh configs/node.singlebox.llamacpp.example.yaml
 ```
 
@@ -638,7 +638,7 @@ This is now sketched in:
 - `scripts/p40_triple_gpu1.sh`
 - `scripts/p40_triple_cpu.sh`
 
-The current concrete defaults use models already present under `/home/netuser/bin/models/llm`:
+The current concrete defaults assume models are staged under `MODEL_DIR`, defaulting to `/opt/models/llm`:
 
 - `GPU0`: `Qwen2.5-14B-Instruct-1M-Q5_K_M.gguf`
 - `GPU1`: `Qwen3.5-9B-Q5_K_M.gguf`
@@ -663,7 +663,7 @@ The repo now includes a host-specific role catalog with exactly that intent.
 1. Edit your model paths:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/start_p40_triple_llamacpp.sh
 ```
 
@@ -672,7 +672,7 @@ If the defaults look good, you do not need to edit them before trying the first 
 If `tmux` is available, you can also launch the three processes detached:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/launch_p40_triple.sh
 ```
 
@@ -740,7 +740,7 @@ python scripts/demo_client_agent.py \
 If the host-installed `llama-server` is too old for `Qwen3.5`, but the NVIDIA Container Toolkit is installed, you can test a newer CUDA-enabled `llama.cpp` without changing the host CUDA stack:
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/test_qwen35_server_cuda_container.sh
 ```
 
@@ -748,7 +748,7 @@ Useful overrides:
 
 ```bash
 GPU_INDEX=1 PORT=19092 bash scripts/test_qwen35_server_cuda_container.sh
-MODEL_PATH=/home/netuser/bin/models/llm/Qwen3.5-9B-Q5_K_M.gguf bash scripts/test_qwen35_server_cuda_container.sh
+MODEL_PATH=/opt/models/llm/Qwen3.5-9B-Q5_K_M.gguf bash scripts/test_qwen35_server_cuda_container.sh
 ```
 
 That probe uses the official `ghcr.io/ggml-org/llama.cpp:server-cuda` image. If it loads the model and starts serving, then the remaining blocker is your host `llama.cpp` install, not GPU compatibility.
@@ -771,7 +771,7 @@ That gives remote clients a single stable endpoint without exposing the underlyi
 ### LAN bind
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_control_p40_lan.sh
 ```
 
@@ -788,7 +788,7 @@ python scripts/demo_client_agent.py \
 ### ZeroTier bind
 
 ```bash
-cd /home/netuser/bin/geniehive
+cd /path/to/geniehive
 bash scripts/run_control_p40_zerotier.sh
 ```
 

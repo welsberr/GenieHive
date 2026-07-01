@@ -2,7 +2,8 @@
 set -euo pipefail
 
 IMAGE="${IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}"
-MODEL_PATH="${MODEL_PATH:-/home/netuser/bin/models/llm/Qwen3.5-9B-Q5_K_M.gguf}"
+MODEL_DIR="${MODEL_DIR:-/opt/models/llm}"
+MODEL_PATH="${MODEL_PATH:-${MODEL_DIR}/Qwen3.5-9B-Q5_K_M.gguf}"
 GPU_INDEX="${GPU_INDEX:-0}"
 CTX_SIZE="${CTX_SIZE:-512}"
 PORT="${PORT:-19091}"

@@ -7,7 +7,9 @@ __pycache__/
 .benchmarks/
 
 state/*.sqlite3
+state/*.sqlite3.*
 state/*.db
+state/*.db.*
 state/*.log
 
 .DS_Store

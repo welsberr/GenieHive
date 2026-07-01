@@ -4,7 +4,7 @@ Last updated: 2026-04-29
 
 ## Repository State
 
-- Repository: `/home/netuser/bin/geniehive`
+- Repository: `/path/to/geniehive`
 - Baseline commit: `2355cf8114db5a1ac4630ca22aba63c703553f70`
 - Branch: `main`
 
