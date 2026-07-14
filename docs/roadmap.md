@@ -100,7 +100,7 @@ The v1 core is implemented and tested.
 - ServiceProber probe_once, update_service_health, discover_ollama_assets,
   enrich_service_assets, observed metrics population, configured external
   providers, credential failures, and provider lifecycle cleanup
-- Current full-suite baseline: 81 passing tests
+- Current full-suite baseline: 84 passing tests
 
 ---
 
@@ -116,7 +116,7 @@ Transcription services (faster-whisper, WhisperX) don't expose `/api/tags` or
 
 ### 2. Foundation profile is incomplete
 
-The archive role catalog is now implemented. Archive client tooling, cost
+The archive role catalog and smoke client are now implemented. Cost
 calculation, budget enforcement, the admin CLI, and the production security
 checklist remain unimplemented. Use the atomic work packets in
 `docs/foundation_gateway_roadmap.md`; do not implement these from this summary.

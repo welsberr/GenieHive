@@ -131,7 +131,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M2 Named credentials | complete | Key hashing, storage, admin endpoints, and tests |
 | M3 Audit log | complete | Request records and admin summaries; streaming final usage moves to M7-B/M8-A |
 | M4 Authorization | complete | Named-key operation/model scopes and glob matching |
-| M5 Archive profile | partial | M5-A role catalog is complete; M5-B client env and smoke client remain |
+| M5 Archive profile | complete | Role catalog, client environment contract, smoke client, and operations note |
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
 | M8 Budgets and quotas | ready | Config/storage scaffolding exists; calculation and enforcement do not |
@@ -196,7 +196,7 @@ Out of scope: client scripts, provider adapters, and prompt-quality evaluation.
 
 ### M5-B: Archive Client Contract And Smoke Client
 
-Status: ready
+Status: complete
 
 Goal: prove an archive client needs only the GenieHive endpoint, client key, and
 role name.
