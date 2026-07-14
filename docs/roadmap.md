@@ -1,6 +1,6 @@
 # GenieHive Roadmap
 
-Last updated: 2026-04-27 (P0–P2 complete + routing strategies + streaming + Ollama load state + observed metrics)
+Last updated: 2026-07-14
 
 ## What Is Complete
 
@@ -98,13 +98,15 @@ The v1 core is implemented and tested.
 **Tests:**
 - Registry, chat proxy, node inventory, benchmark runner, full demo flow
 - ServiceProber probe_once, update_service_health, discover_ollama_assets,
-  enrich_service_assets, observed metrics population — all passing (47 total)
+  enrich_service_assets, observed metrics population, configured external
+  providers, credential failures, and provider lifecycle cleanup
+- Current full-suite baseline: 81 passing tests
 
 ---
 
-## Known Gaps and Issues
+## Known Gaps And Issues
 
-No confirmed gaps remain in the current implementation.  Improvement areas:
+The v1 local control plane is operational. The following confirmed gaps remain:
 
 ### 1. Discovery covers Ollama and OpenAI-compatible; faster-whisper not covered
 
@@ -112,7 +114,20 @@ Transcription services (faster-whisper, WhisperX) don't expose `/api/tags` or
 `/v1/models`.  A `discover_protocol: "whisper"` variant could query
 `GET /inference/v1/models` or read a static manifest.
 
-### 2. `architecture.md` could be tightened further
+### 2. Foundation profile is incomplete
+
+The archive role catalog is now implemented. Archive client tooling, cost
+calculation, budget enforcement, the admin CLI, and the production security
+checklist remain unimplemented. Use the atomic work packets in
+`docs/foundation_gateway_roadmap.md`; do not implement these from this summary.
+
+### 3. Non-OpenAI provider strategy is not selected
+
+Configured OpenAI-compatible providers are implemented. Anthropic and other
+native protocols are blocked on the adapter decision in Foundation packet M7-0.
+Do not add a mandatory Node or `pi-ai` dependency without that decision record.
+
+### 4. `architecture.md` could be tightened further
 
 Minor: some sections inherited from earlier drafts could be simplified now that
 the implementation is stable.
@@ -120,6 +135,10 @@ the implementation is stable.
 ---
 
 ## Next Work
+
+For changes suitable for lower-cost implementation models, assign exactly one
+ready packet from `docs/foundation_gateway_roadmap.md`. That document defines
+allowed files, acceptance checks, dependencies, and stop conditions.
 
 1. **Live end-to-end demo** — run control + node against a real upstream (Ollama
    or llama.cpp) and validate: chat via role, direct asset addressing, Ollama
@@ -135,13 +154,13 @@ the implementation is stable.
 
 ---
 
-## V1.5 Scope (Not Yet Started)
+## V1.5 Scope
 
 - mTLS between control plane and node agents
 - Scoped client tokens (read-only vs. operator vs. admin)
 - Active load-aware model swapping (trigger unload/load on a node based on demand)
 - Image and TTS generation adapter stubs
-- Streaming response passthrough for chat completions
+- Provider-neutral streaming audit completion and final usage capture
 
 ---
 
@@ -151,4 +170,5 @@ the implementation is stable.
 - Autonomous global model swapping across many nodes
 - Full WAN zero-trust platform
 - Distributed vector database management
-- Billing or multi-tenant quota accounting
+- Customer billing, metered invoicing, or a general-purpose multi-tenant billing
+  platform. Foundation spend guardrails remain in scope.

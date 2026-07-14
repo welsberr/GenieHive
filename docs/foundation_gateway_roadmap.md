@@ -1,6 +1,6 @@
 # Foundation Gateway Roadmap
 
-Last updated: 2026-04-29
+Last updated: 2026-07-14
 
 ## Decision
 
@@ -120,244 +120,343 @@ budgeting:
 Foundation example configs can switch these flags on. Casual example configs
 should stay short and understandable.
 
-## Revised Milestones
+## Status Summary
 
-### M0: Baseline and Compatibility Guard
+Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 
-Goal: record the current behavior and make compatibility explicit before adding
-governance features.
+| Milestone | Status | Evidence or remaining work |
+|---|---|---|
+| M0 Baseline | complete | `docs/foundation_gateway_baseline.md` and compatibility tests |
+| M1 Feature flags | complete | Config models and casual/Foundation examples |
+| M2 Named credentials | complete | Key hashing, storage, admin endpoints, and tests |
+| M3 Audit log | complete | Request records and admin summaries; streaming final usage moves to M7-B/M8-A |
+| M4 Authorization | complete | Named-key operation/model scopes and glob matching |
+| M5 Archive profile | partial | M5-A role catalog is complete; M5-B client env and smoke client remain |
+| M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
+| M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
+| M8 Budgets and quotas | ready | Config/storage scaffolding exists; calculation and enforcement do not |
+| M9 Admin operations | ready | HTTP endpoints exist; CLI and operator documentation do not |
+| M10 Security review | ready | Checklist and production exposure review do not exist |
 
-Tasks:
+## Instructions For Implementation Agents
 
-- Add `docs/foundation_gateway_baseline.md`.
-- Record current commit, test command, existing exposed ports, and supported
-  casual deployment behavior.
-- Add or preserve tests proving `configs/control.example.yaml` still loads and
-  static `X-Api-Key` auth still works.
+These rules are part of the roadmap. Follow them for every work packet.
 
-Acceptance:
+1. Work on one packet only. Do not include later packets in the same change.
+2. Before editing, run `git status -sb` and read every file listed by the packet.
+3. Preserve casual defaults. No provider key, named key, audit log, budget check,
+   or admin endpoint may become mandatory for `configs/control.example.yaml`.
+4. Never put a real credential, provider response, prompt, or completion in a
+   fixture, log assertion, example, or committed file.
+5. Unit tests must use fake upstreams, injected environment mappings, and
+   temporary SQLite databases. Do not call live model providers from tests.
+6. Do not change route scoring, node heartbeat behavior, or public response
+   shapes unless the packet explicitly requires it.
+7. Run the packet test command, then `python -m pytest -q tests`.
+8. Mark a packet complete only after its acceptance checks pass. If a required
+   decision is missing, stop and report the blocker instead of choosing a new
+   architecture.
 
-- Baseline document exists.
-- Current test suite passes or failures are documented.
-- Compatibility contract is visible in docs.
+## Work Queue
 
-### M1: Config Profiles and Feature Flags
+Execute ready packets in the order shown. M7 packets remain blocked until the
+decision gate is resolved. The M5, M8, and M9-A tracks are independent.
 
-Goal: introduce opt-in switches without changing runtime behavior.
+### M5-A: Archive Role Catalog
 
-Tasks:
+Status: complete
 
-- Add config models for `deployment_profile`, `audit`, `admin_api`,
-  `authorization`, `providers`, and `budgeting`.
-- Keep default values equivalent to current casual behavior.
-- Add a Foundation example config skeleton.
-- Add tests for default values and legacy config loading.
+Goal: define stable role names for archive migration without binding clients to
+provider model IDs.
 
-Acceptance:
+Edit only:
 
-- Existing configs load unchanged.
-- New config sections are accepted.
-- No governance feature activates by default.
+- `configs/roles.foundation.archive.yaml` (new)
+- `tests/test_foundation_archive_profile.py` (new)
+- `configs/control.foundation.example.yaml` only to set `roles_path`
 
-### M2: Named Client Credentials
+Requirements:
 
-Goal: support named, revocable API keys while keeping static keys working.
-
-Tasks:
-
-- Add `ClientContext` with principal metadata.
-- Add API key generation, hashing, verification, and redaction helpers.
-- Add a `client_keys` SQLite table.
-- Add registry methods to create, list, disable, enable, and touch keys.
-- Support named keys only when `auth.enable_named_client_keys` is true.
-- Preserve static `auth.client_api_keys`.
-
-Acceptance:
-
-- Static keys still work.
-- Named keys work through `X-Api-Key` when enabled.
-- Disabled named keys fail.
-- Raw keys are never stored.
-- Request handlers can read authenticated client context.
-
-### M3: Request Audit Log
-
-Goal: make production requests attributable without storing prompt or completion
-content.
-
-Status: implemented for chat, embeddings, and transcription request wrappers.
-Audit logging is disabled by default and enabled by `audit.enabled`. Admin audit
-read endpoints are only mounted when `admin_api.enabled` is true.
-
-Tasks:
-
-- Add request ID generation from `X-Request-Id` or UUID.
-- Add `request_audit_log` SQLite table.
-- Record identity, operation, requested model, resolved service, upstream model,
-  provider kind, status, duration, token usage when available, estimated cost
-  when available, and error category.
-- Add admin-only query and summary endpoints, disabled unless admin API is
-  enabled.
-
-Acceptance:
-
-- Chat, embeddings, and transcription requests create audit rows when enabled.
-- Prompt and completion content are not logged.
-- Failed routing and upstream errors are logged.
-- Casual deployments have no audit behavior unless enabled.
-
-### M4: Model and Operation Authorization
-
-Goal: let Foundation keys be limited to approved roles, models, and operations.
-
-Status: implemented for named client keys. Enforcement is controlled by
-`authorization.enforce_model_allowlists` and
-`authorization.enforce_operation_allowlists`. Static and development auth retain
-casual-deployment behavior.
-
-Tasks:
-
-- Add allowed models and allowed operations to named keys.
-- Enforce operation scopes only when authorization enforcement is enabled.
-- Support exact model IDs and conservative glob patterns such as `local/*`,
-  `openai/*`, `anthropic/*`, and `role/*`.
-- Prefer role IDs for migration workflows.
-
-Acceptance:
-
-- A chat-only key cannot call embeddings when enforcement is enabled.
-- A key restricted to `archive_migrator` cannot call unrelated roles.
-- Legacy static keys are unaffected unless explicitly mapped into stricter mode.
-
-### M5: Archive Migration Profile
-
-Goal: support TalkOrigins/SciSiteForge-style migration without direct provider
-keys in migration scripts.
-
-Tasks:
-
-- Add `configs/roles.foundation.archive.yaml`.
-- Add roles such as `archive_migrator`, `archive_metadata_extractor`,
+- Define `archive_migrator`, `archive_metadata_extractor`,
   `archive_link_reviewer`, `archive_copyeditor`, and
   `archive_factcheck_assistant`.
-- Add `configs/control.foundation.example.yaml`.
-- Add `configs/clients/archive_migration.example.env`.
-- Add a smoke script that calls `archive_migrator` through the OpenAI-compatible
-  facade.
+- Every role uses a supported operation and a non-empty system prompt.
+- Routing policies describe capabilities or preferred families; they must not
+  contain API keys, base URLs, or mandatory paid-provider model IDs.
+- The test loads the YAML through `load_role_catalog()` and asserts all five role
+  IDs are unique and present.
 
 Acceptance:
 
-- A migration client only needs `GENIEHIVE_BASE_URL`, `GENIEHIVE_API_KEY`, and
-  `GENIEHIVE_MODEL`.
-- The requested model is a role, not a provider-specific model.
-- Local-only provider routing remains possible.
+- `python -m pytest -q tests/test_foundation_archive_profile.py`
+- The Foundation config loads with the new role path.
+- Existing local services can satisfy at least one archive role by policy.
 
-### M6: Provider Credential Indirection
+Out of scope: client scripts, provider adapters, and prompt-quality evaluation.
 
-Goal: keep paid provider credentials out of role configs, node configs, and
-client scripts.
+### M5-B: Archive Client Contract And Smoke Client
 
-Status: OpenAI-compatible configured providers can now register external
-services and resolve request credentials from environment variables. Additional
-provider protocols remain behind the adapter/bridge milestone.
+Status: ready
 
-Tasks:
+Goal: prove an archive client needs only the GenieHive endpoint, client key, and
+role name.
 
-- Add provider config entries using environment variables first.
-- Add external/provider-backed service registration without requiring node
-  heartbeat.
-- Resolve provider headers centrally in the upstream layer.
-- Keep provider credential storage optional; encrypted-at-rest credentials can
-  be deferred.
+Edit only:
 
-Acceptance:
+- `configs/clients/archive_migration.example.env` (new)
+- `scripts/smoke_foundation_archive.py` (new)
+- `tests/test_foundation_archive_smoke.py` (new)
+- `docs/foundation_gateway_operations.md` (new) for the smoke instructions
 
-- Provider keys are loaded from environment variables, not committed YAML.
-- Provider-backed services can be routed like local services.
-- Local-only deployments do not need provider sections.
+Requirements:
 
-### M7: Anthropic Messages Adapter
-
-Goal: expose Anthropic models through the existing OpenAI-compatible chat facade.
-
-Tasks:
-
-- Add provider protocol dispatch in `UpstreamClient`.
-- Transform OpenAI-shaped messages into Anthropic Messages requests.
-- Transform Anthropic responses back to OpenAI-compatible chat completions.
-- Reject Anthropic streaming clearly until implemented.
+- Read `GENIEHIVE_BASE_URL`, `GENIEHIVE_API_KEY`, and `GENIEHIVE_MODEL`.
+- Default `GENIEHIVE_MODEL` to `archive_migrator`.
+- Send one OpenAI-compatible non-streaming chat request.
+- Exit nonzero and print a concise error for missing configuration, HTTP
+  failure, malformed JSON, or a missing assistant message.
+- Test the client with a local fake HTTP server; do not require a model server.
 
 Acceptance:
 
-- A chat request can route to an Anthropic-backed service.
-- System messages and usage fields are mapped correctly.
-- Unsupported streaming fails with a specific error.
+- The script succeeds against the fake server.
+- No provider-specific environment variable is read by the script.
 
-### M8: Budget and Quota Enforcement
+Out of scope: batch migration logic and retries.
 
-Goal: prevent accidental provider overspend.
+### M7-0: Adapter Strategy Decision
 
-Tasks:
+Status: blocked on operator decision
 
-- Add budget config with disabled default.
-- Use audit summaries to calculate monthly usage.
-- Add request, token, and estimated-cost limits per key, provider, and globally.
-- Add configurable price maps.
+Goal: select one implementation strategy before adapter code is written.
+
+Decision options:
+
+- `native_python`: implement Anthropic Messages in the FastAPI process using the
+  official Python SDK or HTTP API.
+- `pi_bridge`: run an optional Node service using `@earendil-works/pi-ai` and
+  register it with GenieHive as an ordinary external service.
+
+Decision record:
+
+- Update `docs/pi_ai_integration.md` with `Selected strategy`, `Reason`,
+  `Operational owner`, `Review date`, `Implementation files`, and `Test files`.
+- Select `pi_bridge` only when at least three non-OpenAI protocols, provider
+  OAuth, or persisted cross-provider sessions are required.
+
+Stop condition: an implementation agent must not infer the choice from package
+popularity or provider count in examples.
+
+### M7-A: Non-Streaming Adapter Contract
+
+Status: blocked by M7-0
+
+Goal: support one Anthropic Messages request through the selected adapter while
+preserving the OpenAI-compatible GenieHive response.
+
+Required behavior:
+
+- Map system, user, and assistant text messages.
+- Map model ID, maximum output tokens, temperature, and stop sequences.
+- Map assistant text, finish reason, input tokens, and output tokens back to the
+  existing OpenAI-compatible response.
+- Return a specific `4xx` error for unsupported request fields and `502` for an
+  upstream provider failure.
+- Keep `openai_compatible` and local service behavior unchanged.
+
+Tests:
+
+- Add adapter-specific unit tests with recorded synthetic payloads.
+- Add one control API test that routes a configured Anthropic model.
+- Run `python -m pytest -q tests`.
+
+Out of scope: streaming, images, tool calls, OAuth, and conversation persistence.
+
+### M7-B: Streaming Adapter Contract
+
+Status: blocked by M7-A
+
+Goal: stream Anthropic text and final usage through the OpenAI-compatible SSE
+facade.
+
+Requirements:
+
+- Emit valid OpenAI chat-completion chunks and exactly one `[DONE]` marker.
+- Convert upstream errors before the first event into an HTTP error response.
+- Convert errors after streaming starts into a terminal SSE error event and
+  close the stream.
+- Record final status and usage in the audit row after the stream completes.
+
+Out of scope: tool calls and exposed reasoning content.
+
+### M7-C: Tool And Reasoning Compatibility
+
+Status: blocked by M7-B
+
+Goal: normalize tool calls without exposing hidden reasoning by default.
+
+Requirements:
+
+- Validate tool arguments against the submitted JSON Schema.
+- Preserve tool call IDs and tool result association.
+- Make reasoning exposure an explicit policy; the default remains hidden.
+- Add tests for malformed arguments, interleaved text/tool deltas, and tool
+  results returned to a different eligible model.
+
+### M8-A: Price Map And Cost Calculation
+
+Status: ready
+
+Goal: calculate deterministic request cost without enforcing a limit.
+
+Edit:
+
+- `src/geniehive_control/config.py`
+- `src/geniehive_control/budgeting.py` (new)
+- `src/geniehive_control/main.py`
+- `tests/test_control_budgeting.py` (new)
+- `configs/control.foundation.example.yaml`
+
+Requirements:
+
+- Add per-model input/output price entries in integer microdollars per million
+  tokens. Do not use binary floating point for policy decisions.
+- Calculate cost only from normalized usage and an exact model price match.
+- Store the resulting `estimated_cost_cents` in the existing audit field.
+- When a price is unknown, return `None`; do not guess or silently use another
+  model's price.
+- Budgeting remains disabled by default.
 
 Acceptance:
 
-- Requests over configured limits are denied before upstream calls.
-- Unknown-cost behavior is configurable.
-- Casual deployments do not perform budget checks.
+- Tests cover known price, unknown price, zero-token usage, and rounding.
+- Casual-profile responses and audit behavior remain unchanged.
 
-### M9: Admin CLI and Operations Docs
+Out of scope: denying requests and fetching prices from the network.
 
-Goal: make managed operation scriptable and understandable.
+### M8-B: Named-Key Token Enforcement
 
-Tasks:
+Status: ready after M8-A
 
-- Add `geniehive-admin` CLI for create/list/disable/enable keys and usage
-  summaries.
-- Add Foundation docs for gateway operation, provider accounts, key management,
-  archive migration workflow, and emergency disable.
-- Document when provider-native seats are needed instead of GenieHive routing.
+Goal: reject a named key whose monthly token allowance is exhausted.
 
-Acceptance:
+Requirements:
 
-- A new operator can provision and revoke a user key without editing SQLite.
-- A board-facing control summary explains ownership, auditability, and budget
-  control.
-
-### M10: Security Review
-
-Goal: make the Foundation profile safe to expose beyond localhost.
-
-Tasks:
-
-- Add a security checklist covering provider keys, admin auth, content logging,
-  CORS, TLS/reverse proxy, backup/restore, rate limits, and emergency disable.
-- Implement critical checklist items or explicitly defer with issue references.
-- Keep WAN and zero-trust networking as deployment concerns unless a concrete
-  need appears.
+- Add a registry query for usage since the current configured reset boundary.
+- Check `monthly_token_limit` before calling the upstream.
+- Return `429` with a stable GenieHive error code when exhausted.
+- Static and development keys remain unaffected.
+- Use an injected or explicitly passed clock in tests; do not depend on the
+  machine's current month.
 
 Acceptance:
 
-- Security checklist exists.
-- Critical production risks have implementation or documented mitigations.
+- Tests cover below limit, exactly at limit, over limit, disabled enforcement,
+  reset boundary, and two different keys.
 
-## Initial Implementation Order
+Out of scope: predicting the token count of the pending request.
 
-1. M0: Baseline and compatibility guard.
-2. M1: Config profiles and feature flags.
-3. M2: Named client credentials.
-4. M3: Request audit log.
-5. M4: Model and operation authorization.
-6. M5: Archive migration profile.
-7. M6: Provider credential indirection.
-8. M7: Anthropic Messages adapter.
-9. M8: Budget and quota enforcement.
-10. M9: Admin CLI and operations docs.
-11. M10: Security review.
+### M8-C: Cost Budget Enforcement
 
-This order lets local-only and TalkOrigins migration pilots start before paid
-provider routing and budget controls are complete.
+Status: ready after M8-B
+
+Goal: enforce named-key, provider, and global monthly cost ceilings.
+
+Requirements:
+
+- Use audited integer or exact-decimal cost totals.
+- Apply the most restrictive configured limit before the upstream call.
+- Implement `deny_on_unknown_cost`: deny when true, allow and audit unknown cost
+  when false.
+- Return `429` for an exhausted budget and `503` when policy requires a price but
+  no price exists.
+- Never treat a missing limit as zero.
+
+Acceptance:
+
+- Tests isolate key, provider, and global limits and verify casual defaults.
+
+### M9-A: Admin CLI
+
+Status: ready
+
+Goal: manage keys and inspect usage through the admin HTTP API rather than direct
+SQLite access.
+
+Edit:
+
+- `src/geniehive_control/admin_cli.py` (new)
+- `pyproject.toml` for the `geniehive-admin` entry point
+- `tests/test_admin_cli.py` (new)
+
+Commands:
+
+- `client-key create`
+- `client-key list`
+- `client-key enable`
+- `client-key disable`
+- `audit list`
+- `audit summary`
+
+Requirements:
+
+- Read base URL and admin key from flags or environment variables.
+- Never print a stored key hash. Print a newly created raw key only once.
+- Provide nonzero exits for authentication, validation, transport, and server
+  errors.
+
+### M9-B: Operations Documentation
+
+Status: ready after M9-A and M8-C
+
+Goal: make routine and emergency operation reproducible.
+
+Create or complete `docs/foundation_gateway_operations.md` with:
+
+- initial configuration
+- provider environment variables
+- key provisioning and revocation
+- usage and budget inspection
+- archive smoke workflow
+- emergency provider disable
+- SQLite backup and restore
+- when to use provider-native seats instead of GenieHive
+
+Acceptance: every command names its working directory and required environment;
+no example contains a plausible real secret.
+
+### M10-A: Security Checklist
+
+Status: ready after M9-B
+
+Goal: classify production exposure risks without expanding GenieHive into a WAN
+security platform.
+
+Create `docs/foundation_gateway_security.md` covering:
+
+- TLS and reverse proxy ownership
+- admin endpoint exposure
+- provider and client secret storage
+- prompt/completion logging prohibition
+- CORS and browser access
+- request size and rate limits
+- backup protection and restoration tests
+- dependency and container update policy
+- emergency key and provider disable
+
+For every item record `implemented`, `deployment control`, or `deferred`, plus an
+owner and verification method. Do not mark the Foundation profile production
+ready while any critical item has no owner or mitigation.
+
+## Completion Order
+
+1. Archive track: M5-A, then M5-B.
+2. Budget track: M8-A, then M8-B, then M8-C.
+3. Adapter track: M7 begins only after M7-0 is resolved; then run M7-A,
+   M7-B, and M7-C.
+4. Operations track: M9-A may start immediately. M9-B requires M9-A and M8-C.
+5. Security track: M10-A follows M9-B.
+
+Do not combine tracks merely to reduce the number of commits. Small independent
+changes are intentional so lower-cost models can be assigned one packet with a
+clear verification boundary.

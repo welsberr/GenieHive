@@ -1,0 +1,103 @@
+# Foundation archive migration roles.
+# Roles describe the task contract; concrete local or configured providers are
+# selected by GenieHive routing and must not be named here.
+roles:
+  - role_id: "archive_migrator"
+    display_name: "Archive Migrator"
+    description: "Migrate archive content while preserving structure, links, citations, and meaning."
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: |
+        Migrate the supplied archive content carefully. Preserve headings, lists,
+        links, citations, code, and factual meaning. Do not invent missing facts.
+        Return the requested migration artifact and identify unresolved issues
+        briefly when they cannot be resolved from the input.
+      request_policy:
+        body_defaults:
+          temperature: 0.1
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      min_context: 8192
+      require_loaded: true
+      context_budget_mode: "upstream"
+
+  - role_id: "archive_metadata_extractor"
+    display_name: "Archive Metadata Extractor"
+    description: "Extract stable, structured metadata from archive pages."
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: |
+        Extract only metadata supported by the supplied archive content. Keep
+        titles, dates, authors, topics, citations, and URLs distinct. Use the
+        requested output format exactly. Use null or an explicit unknown marker
+        when a field is not supported; never guess.
+      request_policy:
+        body_defaults:
+          temperature: 0.0
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      min_context: 8192
+      require_loaded: true
+      context_budget_mode: "upstream"
+
+  - role_id: "archive_link_reviewer"
+    display_name: "Archive Link Reviewer"
+    description: "Review links and report evidence-backed migration actions."
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: |
+        Review each supplied link conservatively. Distinguish an observed URL
+        or status from an inference. Report broken, redirected, duplicate, and
+        uncertain links separately. Do not claim that a link was fetched unless
+        the tool or input provides that evidence.
+      request_policy:
+        body_defaults:
+          temperature: 0.0
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      min_context: 8192
+      require_loaded: true
+      context_budget_mode: "upstream"
+
+  - role_id: "archive_copyeditor"
+    display_name: "Archive Copyeditor"
+    description: "Edit migrated archive prose without changing its claims."
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: |
+        Copyedit the supplied archive text for clarity, grammar, and consistent
+        style while preserving claims, qualifications, citations, links, and
+        technical terminology. Do not add evidence or alter the author's
+        meaning. Return only the edited text unless a review note is requested.
+      request_policy:
+        body_defaults:
+          temperature: 0.1
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      min_context: 8192
+      require_loaded: true
+      context_budget_mode: "upstream"
+
+  - role_id: "archive_factcheck_assistant"
+    display_name: "Archive Fact-check Assistant"
+    description: "Identify claims that require verification without fabricating a verdict."
+    operation: "chat"
+    modality: "text"
+    prompt_policy:
+      system_prompt: |
+        Fact-check the supplied claims using only the provided evidence and
+        explicitly available tools. Separate supported, contradicted, and
+        unresolved claims. Quote or cite the evidence location when available.
+        Never convert an absence of evidence into a definitive verdict.
+      request_policy:
+        body_defaults:
+          temperature: 0.0
+    routing_policy:
+      preferred_families: ["Qwen3", "Mistral", "Llama"]
+      min_context: 8192
+      require_loaded: true
+      context_budget_mode: "upstream"
