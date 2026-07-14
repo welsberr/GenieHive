@@ -135,7 +135,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
 | M8 Budgets and quotas | complete | M8-A cost calculation, M8-B token enforcement, and M8-C cost ceilings are implemented and tested |
-| M9 Admin operations | partial | M9-A CLI is complete; M9-B operator documentation remains |
+| M9 Admin operations | complete | M9-A CLI and M9-B operator runbook are complete |
 | M10 Security review | ready | Checklist and production exposure review do not exist |
 
 ## Instructions For Implementation Agents
@@ -457,7 +457,7 @@ pass; `geniehive-admin` is installed by `pip install -e '.[dev]'`.
 
 ### M9-B: Operations Documentation
 
-Status: ready after M9-A and M8-C
+Status: complete
 
 Goal: make routine and emergency operation reproducible.
 
@@ -473,7 +473,8 @@ Create or complete `docs/foundation_gateway_operations.md` with:
 - when to use provider-native seats instead of GenieHive
 
 Acceptance: every command names its working directory and required environment;
-no example contains a plausible real secret.
+no example contains a plausible real secret. The runbook is complete in
+`docs/foundation_gateway_operations.md`.
 
 ### M10-A: Security Checklist
 
