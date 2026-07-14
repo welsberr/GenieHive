@@ -100,7 +100,7 @@ The v1 core is implemented and tested.
 - ServiceProber probe_once, update_service_health, discover_ollama_assets,
   enrich_service_assets, observed metrics population, configured external
   providers, credential failures, and provider lifecycle cleanup
-- Current full-suite baseline: 92 passing tests
+- Current full-suite baseline: 93 passing tests
 
 ---
 

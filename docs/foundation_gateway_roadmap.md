@@ -377,9 +377,8 @@ Acceptance:
 - Tests isolate key, provider, and global limits and verify casual defaults.
 
 Current implementation includes pre-upstream key/provider/global checks and
-unknown-price policy handling; endpoint acceptance coverage remains pending
-because the local TestClient runner is currently hanging even for a minimal
-FastAPI app.
+unknown-price policy handling; isolated endpoint acceptance coverage remains
+pending.
 
 ### M9-A: Admin CLI
 
