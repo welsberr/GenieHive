@@ -44,12 +44,18 @@ class ProviderConfig(BaseModel):
     enabled: bool = True
 
 
+class ModelPrice(BaseModel):
+    input_microdollars_per_million: int = Field(ge=0)
+    output_microdollars_per_million: int = Field(ge=0)
+
+
 class BudgetingConfig(BaseModel):
     enabled: bool = False
     reset_day_of_month: int = 1
     global_monthly_budget_cents: int | None = None
     provider_monthly_budget_cents: dict[str, int] = Field(default_factory=dict)
     deny_on_unknown_cost: bool = False
+    model_prices: dict[str, ModelPrice] = Field(default_factory=dict)
 
 
 class StorageConfig(BaseModel):

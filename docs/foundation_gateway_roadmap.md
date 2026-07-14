@@ -134,7 +134,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M5 Archive profile | complete | Role catalog, client environment contract, smoke client, and operations note |
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
-| M8 Budgets and quotas | ready | Config/storage scaffolding exists; calculation and enforcement do not |
+| M8 Budgets and quotas | partial | M8-A cost calculation is complete; enforcement remains |
 | M9 Admin operations | ready | HTTP endpoints exist; CLI and operator documentation do not |
 | M10 Security review | ready | Checklist and production exposure review do not exist |
 
@@ -305,7 +305,7 @@ Requirements:
 
 ### M8-A: Price Map And Cost Calculation
 
-Status: ready
+Status: complete
 
 Goal: calculate deterministic request cost without enforcing a limit.
 
@@ -336,7 +336,7 @@ Out of scope: denying requests and fetching prices from the network.
 
 ### M8-B: Named-Key Token Enforcement
 
-Status: ready after M8-A
+Status: ready
 
 Goal: reject a named key whose monthly token allowance is exhausted.
 

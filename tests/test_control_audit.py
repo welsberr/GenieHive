@@ -52,6 +52,22 @@ storage:
     return config_path
 
 
+def _write_budget_audit_config(tmp_path: Path) -> Path:
+    config_path = _write_audit_config(tmp_path)
+    config_path.write_text(
+        config_path.read_text()
+        + """
+budgeting:
+  enabled: true
+  model_prices:
+    qwen-test:
+      input_microdollars_per_million: 1000000
+      output_microdollars_per_million: 1000000
+"""
+    )
+    return config_path
+
+
 def _register_chat_service(app) -> None:
     app.state.registry.register_host(
         HostRegistration(
@@ -103,6 +119,32 @@ def test_successful_chat_request_is_audited_without_prompt_content(tmp_path: Pat
     assert row["completion_tokens"] == 3
     assert row["total_tokens"] == 10
     assert "private prompt text" not in json.dumps(row)
+
+
+def test_enabled_budgeting_records_exact_model_cost_in_audit(tmp_path: Path) -> None:
+    class _PricedPoster:
+        async def post(self, url: str, *, json: dict, headers: dict[str, str] | None = None) -> _FakeResponse:
+            return _FakeResponse(
+                {
+                    "object": "chat.completion",
+                    "model": json["model"],
+                    "choices": [{"message": {"role": "assistant", "content": "done"}}],
+                    "usage": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500},
+                }
+            )
+
+    app = create_app(_write_budget_audit_config(tmp_path), upstream_client=UpstreamClient(client=_PricedPoster()))
+    _register_chat_service(app)
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        headers={"X-Api-Key": "audit-key", "X-Request-Id": "req-priced"},
+        json={"model": "qwen-test", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    row = app.state.registry.get_request_audit("req-priced")
+    assert row is not None
+    assert row["estimated_cost_cents"] == 0.15
 
 
 def test_failed_chat_route_is_audited(tmp_path: Path) -> None:

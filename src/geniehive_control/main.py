@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .auth import authorize_client_request, require_admin_auth, require_client_auth, require_node_auth
+from .budgeting import calculate_estimated_cost_cents
 from .chat import ProxyError, _prepare_chat_upstream, proxy_chat_completion, proxy_embeddings, proxy_transcription, stream_chat_completion
 from .config import ControlConfig, load_config
 from .keys import generate_api_key, hash_api_key
@@ -136,6 +137,14 @@ def create_app(
             return
         context = _client_context(request)
         usage = _usage_from_response(response)
+        estimated_cost_cents = None
+        if cfg.budgeting.enabled:
+            estimated = calculate_estimated_cost_cents(
+                route_metadata.get("upstream_model"),
+                usage,
+                cfg.budgeting.model_prices,
+            )
+            estimated_cost_cents = float(estimated) if estimated is not None else None
         request.app.state.registry.record_request_audit(
             request_id=request_id,
             key_id=getattr(context, "key_id", None),
@@ -154,6 +163,7 @@ def create_app(
             error_type=error_type,
             input_bytes=input_bytes,
             output_bytes=output_bytes,
+            estimated_cost_cents=estimated_cost_cents,
             **usage,
         )
 
