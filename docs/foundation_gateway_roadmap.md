@@ -135,7 +135,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
 | M8 Budgets and quotas | complete | M8-A cost calculation, M8-B token enforcement, and M8-C cost ceilings are implemented and tested |
-| M9 Admin operations | ready | HTTP endpoints exist; CLI and operator documentation do not |
+| M9 Admin operations | partial | M9-A CLI is complete; M9-B operator documentation remains |
 | M10 Security review | ready | Checklist and production exposure review do not exist |
 
 ## Instructions For Implementation Agents
@@ -425,7 +425,7 @@ Acceptance:
 
 ### M9-A: Admin CLI
 
-Status: ready
+Status: complete
 
 Goal: manage keys and inspect usage through the admin HTTP API rather than direct
 SQLite access.
@@ -451,6 +451,9 @@ Requirements:
 - Never print a stored key hash. Print a newly created raw key only once.
 - Provide nonzero exits for authentication, validation, transport, and server
   errors.
+
+Acceptance: `.venv/bin/pytest -q tests/test_admin_cli.py` and the full suite
+pass; `geniehive-admin` is installed by `pip install -e '.[dev]'`.
 
 ### M9-B: Operations Documentation
 
