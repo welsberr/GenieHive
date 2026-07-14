@@ -22,6 +22,7 @@ class ServiceAsset(BaseModel):
 class ServiceRuntime(BaseModel):
     engine: str | None = None
     launcher: str | None = None
+    provider_id: str | None = None
     context_size: int | None = None
     max_context_tokens: int | None = None
 

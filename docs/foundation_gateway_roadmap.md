@@ -257,6 +257,10 @@ Acceptance:
 Goal: keep paid provider credentials out of role configs, node configs, and
 client scripts.
 
+Status: OpenAI-compatible configured providers can now register external
+services and resolve request credentials from environment variables. Additional
+provider protocols remain behind the adapter/bridge milestone.
+
 Tasks:
 
 - Add provider config entries using environment variables first.

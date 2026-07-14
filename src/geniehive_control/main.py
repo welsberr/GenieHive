@@ -17,6 +17,7 @@ from .config import ControlConfig, load_config
 from .keys import generate_api_key, hash_api_key
 from .models import BenchmarkIngestRequest, HostHeartbeat, HostRegistration, RouteMatchRequest, RouteMatchResponse
 from .probe import ServiceProber
+from .providers import ConfiguredProviders
 from .roles import load_role_catalog
 from .registry import Registry
 from .routing import choose_upstream_model_id
@@ -31,10 +32,13 @@ def create_app(
     cfg_path = config_path or os.environ.get("GENIEHIVE_CONTROL_CONFIG")
     cfg = load_config(cfg_path) if cfg_path else ControlConfig()
     registry = Registry(cfg.storage.sqlite_path, routing_strategy=cfg.routing.default_strategy)
+    configured_providers = ConfiguredProviders(cfg.providers)
+    configured_providers.register_services(registry)
     roles_path = cfg.roles_path or os.environ.get("GENIEHIVE_ROLES_CONFIG")
     if roles_path:
         registry.upsert_roles(load_role_catalog(roles_path).roles)
     upstream = upstream_client or UpstreamClient()
+    upstream.set_header_resolver(configured_providers.headers_for_service)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -282,6 +286,7 @@ def create_app(
             if body.get("stream"):
                 # Resolve route eagerly so ProxyError is raised before streaming starts.
                 service, upstream_body = _prepare_chat_upstream(body, registry=reg)
+                up.validate_service(service)
                 _audit_request(
                     request,
                     request_id=request_id,

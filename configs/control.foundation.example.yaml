@@ -40,11 +40,15 @@ providers:
     provider_kind: "openai_compatible"
     base_url: "https://api.openai.com"
     api_key_env: "OPENAI_API_KEY"
+    models:
+      - "gpt-4o-mini"
     enabled: false
   - provider_id: "anthropic-foundation"
     provider_kind: "anthropic_messages"
     base_url: "https://api.anthropic.com"
     api_key_env: "ANTHROPIC_API_KEY"
+    models:
+      - "claude-sonnet-4-5"
     default_headers:
       anthropic-version: "2023-06-01"
     enabled: false

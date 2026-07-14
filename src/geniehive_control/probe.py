@@ -30,6 +30,8 @@ class ServiceProber:
         return results
 
     async def _probe_service(self, service: dict) -> str:
+        if (service.get("runtime") or {}).get("launcher") == "configured_provider":
+            return service["state"].get("health") or "unknown"
         endpoint = service.get("endpoint", "")
         if not endpoint:
             return service["state"].get("health") or "unknown"

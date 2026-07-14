@@ -41,5 +41,6 @@ def test_foundation_control_example_loads_as_opt_in_profile() -> None:
     assert cfg.authorization.enforce_operation_allowlists is True
     assert cfg.providers[0].provider_id == "openai-foundation"
     assert cfg.providers[0].api_key_env == "OPENAI_API_KEY"
+    assert cfg.providers[0].models == ["gpt-4o-mini"]
     assert cfg.providers[1].provider_kind == "anthropic_messages"
     assert cfg.budgeting.global_monthly_budget_cents == 5000

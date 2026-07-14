@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -38,6 +39,8 @@ class ProviderConfig(BaseModel):
     base_url: str
     api_key_env: str | None = None
     default_headers: dict[str, str] = Field(default_factory=dict)
+    operation: Literal["chat", "embeddings"] = "chat"
+    models: list[str] = Field(default_factory=list)
     enabled: bool = True
 
 

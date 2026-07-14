@@ -246,6 +246,20 @@ class Registry:
             self._replace_services(conn, reg.host_id, reg.services, now)
         return self.get_host(reg.host_id)
 
+    def remove_external_provider_hosts(self, keep_host_ids: set[str]) -> None:
+        """Remove configured-provider hosts that are no longer enabled."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT host_id, labels_json FROM hosts").fetchall()
+            stale_host_ids = [
+                row["host_id"]
+                for row in rows
+                if json.loads(row["labels_json"]).get("service_origin") == "external_provider"
+                and row["host_id"] not in keep_host_ids
+            ]
+            for host_id in stale_host_ids:
+                conn.execute("DELETE FROM services WHERE host_id = ?", (host_id,))
+                conn.execute("DELETE FROM hosts WHERE host_id = ?", (host_id,))
+
     def heartbeat_host(self, hb: HostHeartbeat) -> dict | None:
         now = time.time()
         with self._connect() as conn:

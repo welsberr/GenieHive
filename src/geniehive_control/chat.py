@@ -91,7 +91,9 @@ async def proxy_chat_completion(
     upstream: UpstreamClient,
 ) -> Any:
     service, upstream_body = _prepare_chat_upstream(body, registry=registry)
-    response = await upstream.chat_completions(service["endpoint"], upstream_body)
+    response = await upstream.chat_completions(
+        service["endpoint"], upstream_body, service=service
+    )
     return _strip_reasoning_fields(response)
 
 
@@ -102,7 +104,9 @@ async def stream_chat_completion(
     upstream: UpstreamClient,
 ) -> AsyncGenerator[bytes, None]:
     """Yield SSE bytes from upstream, stripping reasoning fields from each chunk."""
-    async for chunk in upstream.chat_completions_stream(service["endpoint"], upstream_body):
+    async for chunk in upstream.chat_completions_stream(
+        service["endpoint"], upstream_body, service=service
+    ):
         yield _strip_reasoning_from_sse_chunk(chunk)
 
 
@@ -126,7 +130,9 @@ async def proxy_embeddings(
 
     upstream_body = dict(body)
     upstream_body["model"] = choose_upstream_model_id(requested_model, service)
-    return await upstream.embeddings(service["endpoint"], upstream_body)
+    return await upstream.embeddings(
+        service["endpoint"], upstream_body, service=service
+    )
 
 
 async def proxy_transcription(
@@ -165,4 +171,5 @@ async def proxy_transcription(
         file_name=file.filename or "audio",
         file_content_type=file.content_type or "application/octet-stream",
         form_data=form_data,
+        service=service,
     )

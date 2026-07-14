@@ -27,6 +27,7 @@ Repository layout:
 - `docs/llm_demo.md`: detailed master/peer/client LLM demo runbook
 - `docs/reverse_proxy.md`: safer external exposure patterns
 - `docs/forge_integration.md`: Forge proxy routing for agentic tool-use roles
+- `docs/pi_ai_integration.md`: provider abstraction and optional pi-ai bridge boundary
 - `docs/apple_silicon_kong_fabric.md`: using GenieHive as a local compute fabric behind Kong AI Gateway
 - `configs/`: example control-plane, node, and role configs
 - `scripts/`: small launch and inspection helpers

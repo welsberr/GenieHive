@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Protocol
+from typing import Any, AsyncGenerator, Callable, Protocol
 
 import httpx
 
@@ -17,11 +17,35 @@ class AsyncPoster(Protocol):
 
 
 class UpstreamClient:
-    def __init__(self, client: AsyncPoster | None = None) -> None:
+    def __init__(
+        self,
+        client: AsyncPoster | None = None,
+        *,
+        header_resolver: Callable[[dict], dict[str, str]] | None = None,
+    ) -> None:
         self._owns_client = client is None
+        self._header_resolver = header_resolver
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=60.0)
         )
+
+    def set_header_resolver(self, resolver: Callable[[dict], dict[str, str]]) -> None:
+        self._header_resolver = resolver
+
+    def validate_service(self, service: dict) -> None:
+        """Resolve request configuration before committing a streaming response."""
+        self._resolve_headers(service, None)
+
+    def _resolve_headers(
+        self,
+        service: dict | None,
+        explicit: dict[str, str] | None,
+    ) -> dict[str, str]:
+        try:
+            resolved = self._header_resolver(service) if self._header_resolver and service else {}
+        except Exception as exc:
+            raise UpstreamError(str(exc), status_code=503) from exc
+        return {**resolved, **(explicit or {})}
 
     async def chat_completions(
         self,
@@ -29,9 +53,14 @@ class UpstreamClient:
         body: dict[str, Any],
         *,
         headers: dict[str, str] | None = None,
+        service: dict | None = None,
     ) -> Any:
         url = base_url.rstrip("/") + "/v1/chat/completions"
-        response = await self._client.post(url, json=body, headers=headers)
+        response = await self._client.post(
+            url,
+            json=body,
+            headers=self._resolve_headers(service, headers),
+        )
         status_code = getattr(response, "status_code", 200)
         if status_code >= 400:
             text = getattr(response, "text", "")
@@ -49,6 +78,7 @@ class UpstreamClient:
         body: dict[str, Any],
         *,
         headers: dict[str, str] | None = None,
+        service: dict | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Yield raw SSE bytes from an upstream chat completions endpoint.
 
@@ -62,7 +92,12 @@ class UpstreamClient:
                 status_code=500,
             )
         url = base_url.rstrip("/") + "/v1/chat/completions"
-        async with self._client.stream("POST", url, json=body, headers=headers or {}) as response:
+        async with self._client.stream(
+            "POST",
+            url,
+            json=body,
+            headers=self._resolve_headers(service, headers),
+        ) as response:
             if response.status_code >= 400:
                 content = await response.aread()
                 raise UpstreamError(
@@ -78,9 +113,14 @@ class UpstreamClient:
         body: dict[str, Any],
         *,
         headers: dict[str, str] | None = None,
+        service: dict | None = None,
     ) -> Any:
         url = base_url.rstrip("/") + "/v1/embeddings"
-        response = await self._client.post(url, json=body, headers=headers)
+        response = await self._client.post(
+            url,
+            json=body,
+            headers=self._resolve_headers(service, headers),
+        )
         status_code = getattr(response, "status_code", 200)
         if status_code >= 400:
             text = getattr(response, "text", "")
@@ -101,6 +141,7 @@ class UpstreamClient:
         file_content_type: str,
         form_data: dict[str, str],
         headers: dict[str, str] | None = None,
+        service: dict | None = None,
     ) -> Any:
         if not isinstance(self._client, httpx.AsyncClient):
             raise UpstreamError(
@@ -112,7 +153,7 @@ class UpstreamClient:
             url,
             data=form_data,
             files={"file": (file_name, file_content, file_content_type)},
-            headers=headers or {},
+            headers=self._resolve_headers(service, headers),
         )
         if response.status_code >= 400:
             raise UpstreamError(
