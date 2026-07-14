@@ -134,7 +134,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M5 Archive profile | complete | Role catalog, client environment contract, smoke client, and operations note |
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
-| M8 Budgets and quotas | partial | M8-A and M8-B are complete; M8-C enforcement exists but still needs endpoint acceptance coverage |
+| M8 Budgets and quotas | complete | M8-A cost calculation, M8-B token enforcement, and M8-C cost ceilings are implemented and tested |
 | M9 Admin operations | ready | HTTP endpoints exist; CLI and operator documentation do not |
 | M10 Security review | ready | Checklist and production exposure review do not exist |
 
@@ -361,7 +361,7 @@ Out of scope: predicting the token count of the pending request.
 
 ### M8-C: Cost Budget Enforcement
 
-Status: partial
+Status: complete
 
 Goal: enforce named-key, provider, and global monthly cost ceilings.
 
@@ -379,13 +379,12 @@ Acceptance:
 
 - Tests isolate key, provider, and global limits and verify casual defaults.
 
-Current implementation includes pre-upstream key/provider/global checks and
-unknown-price policy handling; isolated endpoint acceptance coverage remains
-pending.
+Pre-upstream key/provider/global checks and unknown-price policy handling are
+covered by the M8-C-V endpoint matrix.
 
 ### M8-C-V: Cost Budget Endpoint Verification
 
-Status: ready
+Status: complete
 
 Goal: close M8-C by proving every cost ceiling and unknown-price branch through
 the public request API without changing the enforcement design.
@@ -421,8 +420,8 @@ Acceptance:
 
 - `.venv/bin/pytest -q tests/test_control_budgeting.py`
 - `.venv/bin/pytest -q`
-- Mark M8-C complete only when all matrix cases pass outside any sandbox that
-  blocks asyncio socketpair signaling.
+- All matrix cases pass outside any sandbox that blocks asyncio socketpair
+  signaling.
 
 ### M9-A: Admin CLI
 
@@ -499,8 +498,7 @@ ready while any critical item has no owner or mitigation.
 ## Completion Order
 
 1. Archive track: M5-A, then M5-B.
-2. Budget track: M8-A, then M8-B, then M8-C, with M8-C-V closing the
-   acceptance gap before M8 is marked complete.
+2. Budget track: M8-A, then M8-B, then M8-C and M8-C-V.
 3. Adapter track: M7 begins only after M7-0 is resolved; then run M7-A,
    M7-B, and M7-C.
 4. Operations track: M9-A may start immediately. M9-B requires M9-A and M8-C.

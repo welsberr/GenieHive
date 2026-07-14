@@ -100,7 +100,7 @@ The v1 core is implemented and tested.
 - ServiceProber probe_once, update_service_health, discover_ollama_assets,
   enrich_service_assets, observed metrics population, configured external
   providers, credential failures, and provider lifecycle cleanup
-- Current full-suite baseline: 93 passing tests
+- Current full-suite baseline: 97 passing tests
 
 ---
 
@@ -118,8 +118,8 @@ Transcription services (faster-whisper, WhisperX) don't expose `/api/tags` or
 
 The archive role catalog and smoke client are now implemented. Cost calculation
 and named-key monthly token enforcement are implemented behind the
-disabled-by-default budgeting profile. Cost-ceiling enforcement exists but its
-endpoint acceptance matrix is incomplete; the admin CLI and production security
+disabled-by-default budgeting profile. Cost-ceiling enforcement and its
+endpoint acceptance matrix are complete; the admin CLI and production security
 checklist remain unimplemented. Use the atomic work packets in
 `docs/foundation_gateway_roadmap.md`; do not implement these from this summary.
 
@@ -142,13 +142,12 @@ For changes suitable for lower-cost implementation models, assign exactly one
 ready packet from `docs/foundation_gateway_roadmap.md`. That document defines
 allowed files, acceptance checks, dependencies, and stop conditions.
 
-1. **M8-C-V cost-budget verification** — complete the endpoint test matrix for
-   named-key, provider, global, and unknown-price enforcement. This is the next
-   bounded packet and requires no architecture decision.
+1. **M9-A admin CLI** — implement the six specified key-management and audit
+   commands against the existing admin HTTP API. This is the next bounded packet
+   and requires no architecture decision.
 
-2. **M9-A admin CLI** — implement the six specified key-management and audit
-   commands against the existing admin HTTP API after M8-C-V, or independently
-   on a separate branch.
+2. **M9-B operations documentation** — complete the operator runbook after the
+   admin CLI and budget track are stable.
 
 3. **Live end-to-end demo** — run control + node against a real upstream (Ollama
    or llama.cpp) and validate role and direct routing, discovery/load state,
