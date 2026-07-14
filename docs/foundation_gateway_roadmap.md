@@ -134,7 +134,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M5 Archive profile | complete | Role catalog, client environment contract, smoke client, and operations note |
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
-| M8 Budgets and quotas | partial | M8-A cost calculation is complete; enforcement remains |
+| M8 Budgets and quotas | complete | M8-A exact model cost calculation and M8-B named-key monthly token enforcement are implemented and tested |
 | M9 Admin operations | ready | HTTP endpoints exist; CLI and operator documentation do not |
 | M10 Security review | ready | Checklist and production exposure review do not exist |
 
@@ -336,7 +336,7 @@ Out of scope: denying requests and fetching prices from the network.
 
 ### M8-B: Named-Key Token Enforcement
 
-Status: ready
+Status: complete
 
 Goal: reject a named key whose monthly token allowance is exhausted.
 

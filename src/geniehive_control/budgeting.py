@@ -1,9 +1,39 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timedelta, timezone
+from calendar import monthrange
 from typing import Mapping
 
 from .config import ModelPrice
+
+
+class TokenBudgetExceeded(RuntimeError):
+    status_code = 429
+
+    def __init__(self, *, key_id: str, used_tokens: int, limit: int) -> None:
+        self.key_id = key_id
+        self.used_tokens = used_tokens
+        self.limit = limit
+        super().__init__(
+            f"monthly token limit exhausted for key '{key_id}' "
+            f"({used_tokens}/{limit} tokens used)"
+        )
+
+
+def monthly_period_start(now: float, reset_day: int) -> float:
+    """Return the UTC epoch for the current monthly reset boundary."""
+    current = datetime.fromtimestamp(now, tz=timezone.utc)
+    reset_day = max(1, min(reset_day, 31))
+    current_reset_day = min(reset_day, monthrange(current.year, current.month)[1])
+    if current.day < current_reset_day:
+        previous_last = current.replace(day=1) - timedelta(days=1)
+        year, month = previous_last.year, previous_last.month
+        current_reset_day = min(reset_day, monthrange(year, month)[1])
+        current = current.replace(year=year, month=month, day=current_reset_day)
+    else:
+        current = current.replace(day=current_reset_day)
+    return current.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
 def calculate_estimated_cost_cents(

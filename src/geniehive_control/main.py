@@ -7,12 +7,13 @@ import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Callable
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .auth import authorize_client_request, require_admin_auth, require_client_auth, require_node_auth
-from .budgeting import calculate_estimated_cost_cents
+from .budgeting import TokenBudgetExceeded, calculate_estimated_cost_cents, monthly_period_start
 from .chat import ProxyError, _prepare_chat_upstream, proxy_chat_completion, proxy_embeddings, proxy_transcription, stream_chat_completion
 from .config import ControlConfig, load_config
 from .keys import generate_api_key, hash_api_key
@@ -29,6 +30,7 @@ def create_app(
     config_path: str | Path | None = None,
     *,
     upstream_client: UpstreamClient | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     cfg_path = config_path or os.environ.get("GENIEHIVE_CONTROL_CONFIG")
     cfg = load_config(cfg_path) if cfg_path else ControlConfig()
@@ -40,6 +42,7 @@ def create_app(
         registry.upsert_roles(load_role_catalog(roles_path).roles)
     upstream = upstream_client or UpstreamClient()
     upstream.set_header_resolver(configured_providers.headers_for_service)
+    now = clock or time.time
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -167,6 +170,27 @@ def create_app(
             **usage,
         )
 
+    def _enforce_request_budget(request: Request) -> None:
+        if not cfg.budgeting.enabled:
+            return
+        context = _client_context(request)
+        if context is None or context.auth_kind != "named" or not context.key_id:
+            return
+        key = request.app.state.registry.get_client_key(context.key_id)
+        if key is None or key["monthly_token_limit"] is None:
+            return
+        period_start = monthly_period_start(now(), cfg.budgeting.reset_day_of_month)
+        used_tokens = request.app.state.registry.request_tokens_since(
+            key_id=context.key_id,
+            started_at=period_start,
+        )
+        if used_tokens >= key["monthly_token_limit"]:
+            raise TokenBudgetExceeded(
+                key_id=context.key_id,
+                used_tokens=used_tokens,
+                limit=key["monthly_token_limit"],
+            )
+
     if cfg.admin_api.enabled:
         @app.post("/v1/admin/client-keys")
         async def create_client_key(request: Request, _=Depends(require_admin_auth)) -> dict:
@@ -293,6 +317,7 @@ def create_app(
         input_bytes = len(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         try:
             authorize_client_request(request, operation="chat", model=body.get("model"))
+            _enforce_request_budget(request)
             if body.get("stream"):
                 # Resolve route eagerly so ProxyError is raised before streaming starts.
                 service, upstream_body = _prepare_chat_upstream(body, registry=reg)
@@ -344,6 +369,23 @@ def create_app(
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "chat_proxy_error"}},
                 headers={"X-Request-Id": request_id},
             )
+        except TokenBudgetExceeded as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="chat",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="budget_error",
+                input_bytes=input_bytes,
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc), "type": "geniehive_error", "code": "budget_exceeded"}},
+                headers={"X-Request-Id": request_id},
+            )
         except HTTPException as exc:
             _audit_request(
                 request,
@@ -390,6 +432,7 @@ def create_app(
         input_bytes = len(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         try:
             authorize_client_request(request, operation="embeddings", model=body.get("model"))
+            _enforce_request_budget(request)
             response = await proxy_embeddings(
                 body,
                 registry=reg,
@@ -424,6 +467,23 @@ def create_app(
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "embeddings_proxy_error"}},
+                headers={"X-Request-Id": request_id},
+            )
+        except TokenBudgetExceeded as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="embeddings",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="budget_error",
+                input_bytes=input_bytes,
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc), "type": "geniehive_error", "code": "budget_exceeded"}},
                 headers={"X-Request-Id": request_id},
             )
         except HTTPException as exc:
@@ -478,6 +538,7 @@ def create_app(
         route_metadata = _route_audit_metadata(request.app.state.registry, model, kind="transcription")
         try:
             authorize_client_request(request, operation="transcription", model=model)
+            _enforce_request_budget(request)
             response = await proxy_transcription(
                 model=model,
                 file=file,
@@ -515,6 +576,22 @@ def create_app(
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"error": {"message": str(exc), "type": "geniehive_error", "code": "transcription_proxy_error"}},
+                headers={"X-Request-Id": request_id},
+            )
+        except TokenBudgetExceeded as exc:
+            _audit_request(
+                request,
+                request_id=request_id,
+                operation="transcription",
+                route_metadata=route_metadata,
+                started_at=started_at,
+                status_code=exc.status_code,
+                success=False,
+                error_type="budget_error",
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc), "type": "geniehive_error", "code": "budget_exceeded"}},
                 headers={"X-Request-Id": request_id},
             )
         except HTTPException as exc:

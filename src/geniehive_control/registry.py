@@ -600,6 +600,18 @@ class Registry:
             ).fetchone()
         return self._request_audit_row_to_dict(row) if row is not None else None
 
+    def request_tokens_since(self, *, key_id: str, started_at: float) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens
+                FROM request_audit_log
+                WHERE key_id = ? AND started_at >= ?
+                """,
+                (key_id, started_at),
+            ).fetchone()
+        return int(row["total_tokens"] or 0)
+
     def list_request_audit(
         self,
         *,
