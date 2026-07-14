@@ -118,8 +118,9 @@ Transcription services (faster-whisper, WhisperX) don't expose `/api/tags` or
 
 The archive role catalog and smoke client are now implemented. Cost calculation
 and named-key monthly token enforcement are implemented behind the
-disabled-by-default budgeting profile; cost ceilings, the admin CLI, and the
-production security checklist remain unimplemented. Use the atomic work packets in
+disabled-by-default budgeting profile. Cost-ceiling enforcement exists but its
+endpoint acceptance matrix is incomplete; the admin CLI and production security
+checklist remain unimplemented. Use the atomic work packets in
 `docs/foundation_gateway_roadmap.md`; do not implement these from this summary.
 
 ### 3. Non-OpenAI provider strategy is not selected
@@ -141,17 +142,20 @@ For changes suitable for lower-cost implementation models, assign exactly one
 ready packet from `docs/foundation_gateway_roadmap.md`. That document defines
 allowed files, acceptance checks, dependencies, and stop conditions.
 
-1. **Live end-to-end demo** — run control + node against a real upstream (Ollama
-   or llama.cpp) and validate: chat via role, direct asset addressing, Ollama
-   dynamic discovery with correct load state, `least_loaded` routing with real
-   VRAM metrics, and streaming.
+1. **M8-C-V cost-budget verification** — complete the endpoint test matrix for
+   named-key, provider, global, and unknown-price enforcement. This is the next
+   bounded packet and requires no architecture decision.
 
-2. **Validate Codex-friendly `/v1/models` offload** — test `GET /v1/models` as
-   a programmatic service catalog for a Claude Code or Codex client selecting
-   a GenieHive-hosted model for lower-complexity subtasks.
+2. **M9-A admin CLI** — implement the six specified key-management and audit
+   commands against the existing admin HTTP API after M8-C-V, or independently
+   on a separate branch.
 
-3. **`queue_depth` / `in_flight` from Ollama** — populate from `/api/ps` model
-   count or from a sidecar queue tracker; currently only set from static config.
+3. **Live end-to-end demo** — run control + node against a real upstream (Ollama
+   or llama.cpp) and validate role and direct routing, discovery/load state,
+   `least_loaded` routing, and streaming.
+
+4. **M7-0 adapter decision** — an operator must choose `native_python` or
+   `pi_bridge` before any Anthropic or other non-OpenAI adapter work begins.
 
 ---
 

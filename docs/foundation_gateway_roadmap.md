@@ -134,7 +134,7 @@ Status values are `complete`, `partial`, `ready`, `blocked`, and `deferred`.
 | M5 Archive profile | complete | Role catalog, client environment contract, smoke client, and operations note |
 | M6 Provider indirection | complete | Configured OpenAI-compatible providers and request-time env credentials |
 | M7 Non-OpenAI adapter | blocked | An operator must select native Python or optional `pi-ai` bridge first |
-| M8 Budgets and quotas | complete | M8-A exact model cost calculation and M8-B named-key monthly token enforcement are implemented and tested |
+| M8 Budgets and quotas | partial | M8-A and M8-B are complete; M8-C enforcement exists but still needs endpoint acceptance coverage |
 | M9 Admin operations | ready | HTTP endpoints exist; CLI and operator documentation do not |
 | M10 Security review | ready | Checklist and production exposure review do not exist |
 
@@ -152,7 +152,10 @@ These rules are part of the roadmap. Follow them for every work packet.
    temporary SQLite databases. Do not call live model providers from tests.
 6. Do not change route scoring, node heartbeat behavior, or public response
    shapes unless the packet explicitly requires it.
-7. Run the packet test command, then `python -m pytest -q tests`.
+7. Run the packet test command, then `python -m pytest -q tests`. Starlette
+   `TestClient` tests require an environment that permits local socketpair
+   signaling; a sandbox that returns `EPERM` for socketpair `send()` is not a
+   valid verification environment.
 8. Mark a packet complete only after its acceptance checks pass. If a required
    decision is missing, stop and report the blocker instead of choosing a new
    architecture.
@@ -380,6 +383,47 @@ Current implementation includes pre-upstream key/provider/global checks and
 unknown-price policy handling; isolated endpoint acceptance coverage remains
 pending.
 
+### M8-C-V: Cost Budget Endpoint Verification
+
+Status: ready
+
+Goal: close M8-C by proving every cost ceiling and unknown-price branch through
+the public request API without changing the enforcement design.
+
+Edit only:
+
+- `tests/test_control_budgeting.py`
+- `src/geniehive_control/budgeting.py`, `src/geniehive_control/main.py`, or
+  `src/geniehive_control/registry.py` only when a new acceptance test exposes a
+  defect
+- this roadmap only to mark M8-C and M8-C-V complete
+
+Test matrix:
+
+- named key below and exactly at `monthly_budget_cents`
+- provider below and exactly at its configured monthly ceiling
+- global below and exactly at its configured monthly ceiling
+- simultaneous limits where the most restrictive exhausted scope wins
+- unknown model price allowed when `deny_on_unknown_cost: false`
+- unknown model price returns `503` and code `unknown_cost` when true
+- missing key, provider, and global limits never behave as zero
+- budgeting disabled preserves the casual response and does not deny
+- every denial occurs before the fake upstream is called
+
+Implementation constraints:
+
+- Use a fixed injected clock and temporary SQLite database.
+- Seed audit usage through registry APIs; do not manipulate SQLite directly.
+- Use integer or `Decimal` assertions for cost policy decisions.
+- Do not alter public success responses, route scoring, or token-limit behavior.
+
+Acceptance:
+
+- `.venv/bin/pytest -q tests/test_control_budgeting.py`
+- `.venv/bin/pytest -q`
+- Mark M8-C complete only when all matrix cases pass outside any sandbox that
+  blocks asyncio socketpair signaling.
+
 ### M9-A: Admin CLI
 
 Status: ready
@@ -455,7 +499,8 @@ ready while any critical item has no owner or mitigation.
 ## Completion Order
 
 1. Archive track: M5-A, then M5-B.
-2. Budget track: M8-A, then M8-B, then M8-C.
+2. Budget track: M8-A, then M8-B, then M8-C, with M8-C-V closing the
+   acceptance gap before M8 is marked complete.
 3. Adapter track: M7 begins only after M7-0 is resolved; then run M7-A,
    M7-B, and M7-C.
 4. Operations track: M9-A may start immediately. M9-B requires M9-A and M8-C.
