@@ -10,6 +10,7 @@ from geniehive_control.config import ModelPrice
 from geniehive_control.keys import hash_api_key
 from geniehive_control.main import create_app
 from geniehive_control.models import HostRegistration, RegisteredService
+from geniehive_control.registry import Registry
 from geniehive_control.upstream import UpstreamClient
 
 
@@ -171,3 +172,26 @@ def test_budget_is_independent_per_named_key_and_can_be_disabled(tmp_path: Path,
     assert client.post("/v1/chat/completions", headers={"X-Api-Key": "budget-one"}, json=payload).status_code == 200
     assert client.post("/v1/chat/completions", headers={"X-Api-Key": "budget-two"}, json=payload).status_code == 200
     assert poster.calls == 2
+
+
+def test_cost_usage_query_scopes_key_and_provider(tmp_path: Path) -> None:
+    registry = Registry(tmp_path / "usage.sqlite3")
+    common = {
+        "principal_type": "person",
+        "principal_ref": "test",
+        "operation": "chat",
+        "requested_model": "test-model",
+        "resolved_service_id": "svc",
+        "resolved_host_id": "host",
+        "upstream_model": "test-model",
+        "started_at": 100.0,
+        "finished_at": 101.0,
+        "status_code": 200,
+        "success": True,
+    }
+    registry.record_request_audit(request_id="one", key_id="key-one", provider_kind="openai", estimated_cost_cents=1.25, **common)
+    registry.record_request_audit(request_id="two", key_id="key-two", provider_kind="openai", estimated_cost_cents=2.50, **common)
+    registry.record_request_audit(request_id="three", key_id="key-one", provider_kind="other", estimated_cost_cents=4.00, **common)
+
+    assert registry.request_cost_cents_since(started_at=100.0, key_id="key-one") == [1.25, 4.0]
+    assert registry.request_cost_cents_since(started_at=100.0, provider_kind="openai") == [1.25, 2.5]

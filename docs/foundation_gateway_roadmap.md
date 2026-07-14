@@ -358,7 +358,7 @@ Out of scope: predicting the token count of the pending request.
 
 ### M8-C: Cost Budget Enforcement
 
-Status: ready after M8-B
+Status: partial
 
 Goal: enforce named-key, provider, and global monthly cost ceilings.
 
@@ -375,6 +375,11 @@ Requirements:
 Acceptance:
 
 - Tests isolate key, provider, and global limits and verify casual defaults.
+
+Current implementation includes pre-upstream key/provider/global checks and
+unknown-price policy handling; endpoint acceptance coverage remains pending
+because the local TestClient runner is currently hanging even for a minimal
+FastAPI app.
 
 ### M9-A: Admin CLI
 

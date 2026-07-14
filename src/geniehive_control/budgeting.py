@@ -21,6 +21,27 @@ class TokenBudgetExceeded(RuntimeError):
         )
 
 
+class CostBudgetExceeded(RuntimeError):
+    status_code = 429
+
+    def __init__(self, *, scope: str, used_cents: Decimal, limit_cents: int) -> None:
+        self.scope = scope
+        self.used_cents = used_cents
+        self.limit_cents = limit_cents
+        super().__init__(
+            f"monthly cost limit exhausted for {scope} "
+            f"({used_cents}/{limit_cents} cents used)"
+        )
+
+
+class UnknownCostPolicy(RuntimeError):
+    status_code = 503
+
+    def __init__(self, model: str | None) -> None:
+        self.model = model
+        super().__init__(f"no configured price for model '{model or 'unknown'}'")
+
+
 def monthly_period_start(now: float, reset_day: int) -> float:
     """Return the UTC epoch for the current monthly reset boundary."""
     current = datetime.fromtimestamp(now, tz=timezone.utc)

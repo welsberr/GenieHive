@@ -612,6 +612,29 @@ class Registry:
             ).fetchone()
         return int(row["total_tokens"] or 0)
 
+    def request_cost_cents_since(
+        self,
+        *,
+        started_at: float,
+        key_id: str | None = None,
+        provider_kind: str | None = None,
+    ) -> list[float]:
+        clauses = ["started_at >= ?", "estimated_cost_cents IS NOT NULL"]
+        params: list[object] = [started_at]
+        if key_id is not None:
+            clauses.append("key_id = ?")
+            params.append(key_id)
+        if provider_kind is not None:
+            clauses.append("provider_kind = ?")
+            params.append(provider_kind)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT estimated_cost_cents FROM request_audit_log WHERE "
+                + " AND ".join(clauses),
+                params,
+            ).fetchall()
+        return [float(row["estimated_cost_cents"]) for row in rows]
+
     def list_request_audit(
         self,
         *,
