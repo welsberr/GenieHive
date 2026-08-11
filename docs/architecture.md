@@ -1,6 +1,6 @@
 # GenieHive Architecture
 
-Last updated: 2026-06-04
+Last updated: 2026-08-11
 
 ## Mission
 
@@ -36,7 +36,7 @@ provide.
 ├─────────────────────────────────────────────┤
 │  Provider Adapters                           │
 │  OpenAI-compatible chat / embeddings         │
-│  Transcription (partial)                     │
+│  Multipart transcription proxy               │
 └─────────────────────────────────────────────┘
 ```
 

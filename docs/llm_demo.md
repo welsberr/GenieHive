@@ -8,7 +8,10 @@ This runbook covers the first practical GenieHive LLM demo with three roles:
 
 ## Current Readiness
 
-GenieHive v1 is fully implemented and ready for live demo.
+The v1 local routing demo path is implemented and ready for a live demo. This
+does not mean every planned integration is production-complete: native
+non-OpenAI adapters, mTLS, and scoped tokens remain future work (see the
+roadmap).
 
 What works:
 

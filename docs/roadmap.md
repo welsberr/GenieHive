@@ -153,9 +153,6 @@ allowed files, acceptance checks, dependencies, and stop conditions.
 3. **M7-0 adapter decision** — an operator must choose `native_python` or
    `pi_bridge` before any Anthropic or other non-OpenAI adapter work begins.
 
-4. **M7-0 adapter decision** — an operator must choose `native_python` or
-   `pi_bridge` before any Anthropic or other non-OpenAI adapter work begins.
-
 ---
 
 ## V1.5 Scope

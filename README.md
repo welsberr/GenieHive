@@ -6,7 +6,7 @@ V1 scope:
 
 - chat completions
 - embeddings
-- transcription
+- multipart audio transcription proxying
 
 Core goals:
 
@@ -15,6 +15,28 @@ Core goals:
 - expose a stable client-facing API
 - support direct model addressing and higher-level role addressing
 - route requests to healthy loaded services first
+
+Implemented capabilities include streaming chat (with reasoning-field
+sanitization), role and direct-model routing, scored/round-robin/least-loaded
+scheduling, request-policy shaping, benchmark-informed scoring, active health
+probing, and Ollama/OpenAI-compatible model discovery. The node agent reports
+inventory and heartbeats; it does not start or supervise upstream model servers.
+
+The optional Foundation gateway profile adds named, revocable client keys,
+model/operation scopes, metadata-only request auditing, configured
+OpenAI-compatible providers, and opt-in token/cost budgets. These controls are
+disabled in the casual example configuration. See
+[`docs/roadmap.md`](docs/roadmap.md) for the implementation matrix and
+[`docs/foundation_gateway_operations.md`](docs/foundation_gateway_operations.md)
+for the operator runbook.
+
+Integration boundaries are intentional: Anthropic and other native provider
+protocols remain blocked pending an adapter decision (the example Foundation
+config does not enable Anthropic), mTLS and scoped tokens are v1.5 work, and
+GenieHive does not execute arbitrary tools or provide a WAN zero-trust or
+multi-tenant billing platform. Forge, pi-ai, and Kong are optional upstream or
+edge integrations; they do not replace GenieHive's registry, routing, or
+governance layer.
 
 Repository layout:
 
