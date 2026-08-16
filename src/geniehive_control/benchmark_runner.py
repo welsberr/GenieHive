@@ -7,6 +7,7 @@ from typing import Any, Callable
 import httpx
 
 from .benchmarks import BenchmarkReport, BenchmarkReportSample
+from .evaluation import EvaluationWorkload, check_response
 
 
 @dataclass(slots=True)
@@ -14,6 +15,7 @@ class ChatBenchmarkCase:
     name: str
     prompt: str
     max_completion_tokens: int = 120
+    checks: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -22,6 +24,25 @@ class ChatBenchmarkWorkload:
     system_prompt: str
     cases: list[ChatBenchmarkCase]
     chat_template_kwargs: dict[str, Any] | None = None
+
+    def as_evaluation_workload(self, *, role_ids: list[str], dataset_revision: str) -> EvaluationWorkload:
+        return EvaluationWorkload(
+            workload_id=self.workload,
+            role_ids=role_ids,
+            dataset_revision=dataset_revision,
+            evaluator="geniehive_control.evaluation.check_response",
+            system_prompt=self.system_prompt,
+            chat_template_kwargs=self.chat_template_kwargs,
+            cases=[
+                {
+                    "case_id": case.name,
+                    "prompt": case.prompt,
+                    "max_completion_tokens": case.max_completion_tokens,
+                    "checks": case.checks or [{"kind": "nonempty"}],
+                }
+                for case in self.cases
+            ],
+        )
 
 
 def built_in_chat_workloads() -> dict[str, ChatBenchmarkWorkload]:
@@ -77,6 +98,7 @@ def run_chat_benchmark(
     tokens_per_sec_values: list[float] = []
     completion_tokens: list[int] = []
     prompt_tokens: list[int] = []
+    case_results: list[dict[str, Any]] = []
     passed = 0
     responses_received = 0
     empty_visible_responses = 0
@@ -116,7 +138,17 @@ def run_chat_benchmark(
             tokens_per_sec_values.append(float(timings["predicted_per_second"]))
         elif isinstance(timings.get("predicted_ms"), (int, float)) and completion_tokens[-1] > 0 and float(timings["predicted_ms"]) > 0:
             tokens_per_sec_values.append((completion_tokens[-1] * 1000.0) / float(timings["predicted_ms"]))
-        if _has_nonempty_content(payload):
+        content = _visible_content(payload)
+        checks_passed, check_failures = check_response(content, case.checks or [{"kind": "nonempty"}])
+        case_results.append({
+            "case_id": case.name,
+            "passed": checks_passed,
+            "check_failures": check_failures,
+            "latency_ms": elapsed_ms,
+            "prompt_tokens": prompt_tokens[-1],
+            "completion_tokens": completion_tokens[-1],
+        })
+        if checks_passed:
             passed += 1
         else:
             empty_visible_responses += 1
@@ -135,6 +167,7 @@ def run_chat_benchmark(
             "tokens_per_sec": _median(tokens_per_sec_values) if tokens_per_sec_values else None,
             "prompt_tokens": int(sum(prompt_tokens) / max(1, len(prompt_tokens))),
             "completion_tokens": int(sum(completion_tokens) / max(1, len(completion_tokens))),
+            "case_results": case_results,
         },
     )
     return BenchmarkReport(
@@ -170,3 +203,14 @@ def _has_nonempty_content(payload: dict[str, Any]) -> bool:
     if str(message.get("content", "")).strip():
         return True
     return bool(str(message.get("reasoning_content", "")).strip())
+
+
+def _visible_content(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices", [])
+    if not choices:
+        return ""
+    message = choices[0].get("message", {})
+    content = str(message.get("content", "") or "")
+    if content.strip():
+        return content
+    return str(message.get("reasoning_content", "") or "")

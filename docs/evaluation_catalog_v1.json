@@ -1,0 +1,106 @@
+{
+  "schema_version": "geniehive.evaluation.catalog.v1",
+  "dataset_revision": "eval-2026-08-16-initial",
+  "model_profiles": [
+    {
+      "model_id": "qwen35-9b-q5",
+      "family": "qwen3.5",
+      "architecture": "hybrid",
+      "parameter_count": "9B",
+      "quantization": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "context_limit": 8192,
+      "mtp": true,
+      "availability": "local",
+      "source": "local:/home/netuser/bin/models/llm/Qwen3.5-9B-Q5_K_M.gguf"
+    },
+    {
+      "model_id": "nail-qwen36-35b-a3b-iq3s",
+      "family": "qwen3.6",
+      "variant": "nail",
+      "architecture": "moe",
+      "parameter_count": "35B",
+      "active_parameter_count": "3B",
+      "quantization": "UD-IQ3_S",
+      "runtime": "llama.cpp",
+      "context_limit": 262144,
+      "mtp": true,
+      "availability": "local",
+      "source": "local:/home/netuser/bin/models/llm/geniehive-qwen36/nail/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_S.gguf"
+    },
+    {
+      "model_id": "dagger-qwen36-27b-q4",
+      "family": "qwen3.6",
+      "variant": "dagger",
+      "architecture": "dense",
+      "parameter_count": "27B",
+      "quantization": "Q4_K_M",
+      "runtime": "llama.cpp",
+      "context_limit": 262144,
+      "mtp": true,
+      "availability": "local",
+      "source": "local:/home/netuser/bin/models/llm/geniehive-qwen36/dagger/Dagger-Qwen3.6-27B-MTP-Q4_K_M.gguf"
+    },
+    {
+      "model_id": "qwen25-coder-14b-q5",
+      "family": "qwen2.5-coder",
+      "architecture": "dense",
+      "parameter_count": "14B",
+      "quantization": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "context_limit": 32768,
+      "availability": "local",
+      "source": "local:/home/netuser/bin/models/llm/Qwen2.5-Coder-14B-Instruct-Q5_K_M.gguf"
+    },
+    {
+      "model_id": "devstral-small-2-24b-q4",
+      "family": "devstral",
+      "variant": "small-2-24b",
+      "architecture": "dense",
+      "parameter_count": "24B",
+      "quantization": "Q4_K_M",
+      "runtime": "llama.cpp",
+      "context_limit": 32768,
+      "availability": "local",
+      "source": "local:/home/netuser/bin/models/llm/Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
+    },
+    {
+      "model_id": "jina-embeddings-v4",
+      "family": "jina-embeddings",
+      "architecture": "embedding",
+      "runtime": "transformers",
+      "availability": "local",
+      "source": "local:/home/netuser/bin/models/llm/jina-embeddings-v4"
+    }
+  ],
+  "workloads": [
+    {
+      "workload_id": "chat.structured_json",
+      "role_ids": ["structured_extractor", "bibliographic_analyst"],
+      "dataset_revision": "eval-2026-08-16-initial",
+      "evaluator": "geniehive_control.evaluation.check_response",
+      "risk_class": "high",
+      "minimum_pass_rate": 1.0,
+      "hard_failures": ["invalid_json", "empty_response"],
+      "system_prompt": "Return only valid JSON. Do not use markdown fences.",
+      "cases": [
+        {"case_id": "json_minimal", "prompt": "Return JSON with keys title and year for: Darwin, On the Origin of Species, 1859.", "checks": [{"kind": "json"}, {"kind": "contains", "value": "title"}, {"kind": "contains", "value": "year"}]},
+        {"case_id": "json_unknown", "prompt": "Return JSON with key doi. The supplied text contains no DOI. Use null, not a guess.", "checks": [{"kind": "json"}, {"kind": "contains", "value": "doi"}]}
+      ]
+    },
+    {
+      "workload_id": "chat.tool_call_format",
+      "role_ids": ["tool_user", "coding_agent"],
+      "dataset_revision": "eval-2026-08-16-initial",
+      "evaluator": "geniehive_control.evaluation.check_response",
+      "risk_class": "high",
+      "minimum_pass_rate": 1.0,
+      "hard_failures": ["invalid_json", "empty_response"],
+      "system_prompt": "Return only a JSON object with keys tool and arguments.",
+      "cases": [
+        {"case_id": "tool_lookup", "prompt": "Call lookup_source with {source_id: 'abc'}.", "checks": [{"kind": "json"}, {"kind": "contains", "value": "lookup_source"}, {"kind": "contains", "value": "source_id"}]},
+        {"case_id": "tool_no_action", "prompt": "The request is ambiguous. Return a JSON object asking for clarification and do not invent arguments.", "checks": [{"kind": "json"}, {"kind": "contains", "value": "clar"}]}
+      ]
+    }
+  ]
+}

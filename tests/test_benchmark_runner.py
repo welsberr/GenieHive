@@ -102,3 +102,43 @@ def test_run_chat_benchmark_includes_chat_template_kwargs_when_configured() -> N
     )
 
     assert report.samples[0].results["pass_rate"] == 1.0
+
+
+def test_run_chat_benchmark_records_case_level_contract_results() -> None:
+    workload = ChatBenchmarkWorkload(
+        workload="chat.structured_json",
+        system_prompt="Return JSON.",
+        cases=[
+            ChatBenchmarkCase(
+                name="json_case",
+                prompt="Return a JSON object with key title.",
+                checks=[{"kind": "json"}, {"kind": "contains", "value": "title"}],
+            )
+        ],
+    )
+
+    def fake_request(url: str, headers: dict[str, str], payload: dict) -> dict:
+        return {
+            "choices": [{"message": {"role": "assistant", "content": '{"title":"Example"}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+            "timings": {"prompt_ms": 50.0, "predicted_per_second": 20.0},
+        }
+
+    report = run_chat_benchmark(
+        base_url="http://127.0.0.1:8800",
+        api_key="key",
+        model="structured_extractor",
+        workload=workload,
+        request_fn=fake_request,
+        observed_at=1775584000.0,
+    )
+    assert report.samples[0].results["case_results"] == [
+        {
+            "case_id": "json_case",
+            "passed": True,
+            "check_failures": [],
+            "latency_ms": report.samples[0].results["case_results"][0]["latency_ms"],
+            "prompt_tokens": 10,
+            "completion_tokens": 4,
+        }
+    ]

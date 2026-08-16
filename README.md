@@ -47,6 +47,8 @@ Repository layout:
 - `docs/translation_support.md`: translation-oriented control-plane and node notes
 - `docs/demo.md`: first end-to-end control-plus-node demo flow
 - `docs/llm_demo.md`: detailed master/peer/client LLM demo runbook
+- `docs/roles-model-evaluation.md`: roles × models evaluation framework
+- `docs/evaluation_catalog_v1.json`: versioned model and workload catalog
 - `docs/reverse_proxy.md`: safer external exposure patterns
 - `docs/forge_integration.md`: Forge proxy routing for agentic tool-use roles
 - `docs/pi_ai_integration.md`: provider abstraction and optional pi-ai bridge boundary
