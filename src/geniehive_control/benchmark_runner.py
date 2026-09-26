@@ -7,7 +7,7 @@ from typing import Any, Callable
 import httpx
 
 from .benchmarks import BenchmarkReport, BenchmarkReportSample
-from .evaluation import EvaluationWorkload, check_response
+from .evaluation import EvaluationCase, EvaluationWorkload, check_response
 
 
 @dataclass(slots=True)
@@ -38,7 +38,7 @@ class ChatBenchmarkWorkload:
                     "case_id": case.name,
                     "prompt": case.prompt,
                     "max_completion_tokens": case.max_completion_tokens,
-                    "checks": case.checks or [{"kind": "nonempty"}],
+                    "checks": case.checks if case.checks is not None else [{"kind": "nonempty"}],
                 }
                 for case in self.cases
             ],
@@ -88,10 +88,28 @@ def run_chat_benchmark(
     base_url: str,
     api_key: str,
     model: str,
-    workload: ChatBenchmarkWorkload,
+    workload: ChatBenchmarkWorkload | EvaluationWorkload,
     request_fn: Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]] | None = None,
     observed_at: float | None = None,
 ) -> BenchmarkReport:
+    contract = workload if isinstance(workload, EvaluationWorkload) else None
+    if contract is not None:
+        if contract.evaluator != "geniehive_control.evaluation.check_response":
+            raise ValueError("chat runner supports only the deterministic check_response evaluator")
+        workload = ChatBenchmarkWorkload(
+            workload=contract.workload_id,
+            system_prompt=contract.system_prompt,
+            cases=[ChatBenchmarkCase(name=c.case_id, prompt=c.prompt,
+                                     max_completion_tokens=c.max_completion_tokens, checks=c.checks)
+                   for c in contract.cases],
+            chat_template_kwargs=contract.chat_template_kwargs,
+        )
+    if not workload.cases or len({c.name for c in workload.cases}) != len(workload.cases):
+        raise ValueError("benchmark requires nonempty cases with unique names")
+    for case in workload.cases:
+        EvaluationCase(case_id=case.name, prompt=case.prompt,
+                       max_completion_tokens=case.max_completion_tokens,
+                       checks=case.checks if case.checks is not None else [{"kind": "nonempty"}])
     request = request_fn or _default_chat_request
     latencies_ms: list[float] = []
     ttfts_ms: list[float] = []
@@ -150,13 +168,28 @@ def run_chat_benchmark(
         })
         if checks_passed:
             passed += 1
-        else:
+        if not content.strip():
             empty_visible_responses += 1
+
+    contract_results: dict[str, Any] = {}
+    if contract is not None:
+        hard_failures = sorted({failure for result in case_results
+                                for failure in result["check_failures"]
+                                if failure in contract.hard_failures})
+        contract_results = {
+            "dataset_revision": contract.dataset_revision,
+            "evaluator": contract.evaluator,
+            "role_ids": contract.role_ids,
+            "risk_class": contract.risk_class,
+            "minimum_pass_rate": contract.minimum_pass_rate,
+            "hard_failure_codes": hard_failures,
+            "contract_passed": passed / len(workload.cases) >= contract.minimum_pass_rate and not hard_failures,
+        }
 
     sample = BenchmarkReportSample(
         service_id=model,
         workload=workload.workload,
-        observed_at=observed_at or time.time(),
+        observed_at=observed_at if observed_at is not None else time.time(),
         results={
             "case_count": len(workload.cases),
             "pass_rate": passed / max(1, len(workload.cases)),
@@ -168,6 +201,7 @@ def run_chat_benchmark(
             "prompt_tokens": int(sum(prompt_tokens) / max(1, len(prompt_tokens))),
             "completion_tokens": int(sum(completion_tokens) / max(1, len(completion_tokens))),
             "case_results": case_results,
+            **contract_results,
         },
     )
     return BenchmarkReport(

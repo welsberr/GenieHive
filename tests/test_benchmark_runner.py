@@ -1,4 +1,6 @@
 from geniehive_control.benchmark_runner import ChatBenchmarkCase, ChatBenchmarkWorkload, built_in_chat_workloads, run_chat_benchmark
+from geniehive_control.evaluation import EvaluationWorkload
+import pytest
 
 
 def test_built_in_chat_workloads_exist() -> None:
@@ -142,3 +144,46 @@ def test_run_chat_benchmark_records_case_level_contract_results() -> None:
             "completion_tokens": 4,
         }
     ]
+
+
+def test_contract_hard_failure_overrides_rate_without_counting_nonempty_as_empty():
+    contract=EvaluationWorkload(
+        workload_id="test.contract", role_ids=["structured_extractor"], dataset_revision="test-v1",
+        evaluator="geniehive_control.evaluation.check_response", minimum_pass_rate=0.5,
+        hard_failures=["invalid_json"], cases=[
+            {"case_id":"good","prompt":"valid","checks":[{"kind":"json"}]},
+            {"case_id":"bad","prompt":"invalid","checks":[{"kind":"json"}]},
+        ],
+    )
+    def request(url,headers,payload):
+        content='{}' if payload["messages"][-1]["content"] == "valid" else 'not JSON'
+        return {"choices":[{"message":{"content":content}}]}
+    r=run_chat_benchmark(base_url="http://example.invalid",api_key="test",model="model",workload=contract,request_fn=request,observed_at=0).samples[0]
+    assert r.observed_at == 0
+    assert r.results["pass_rate"] == 0.5
+    assert r.results["empty_visible_response_rate"] == 0
+    assert r.results["hard_failure_codes"] == ["invalid_json"]
+    assert r.results["contract_passed"] is False
+    assert r.results["dataset_revision"] == "test-v1"
+    assert r.results["evaluator"] == contract.evaluator
+    contract.hard_failures=[]
+    r=run_chat_benchmark(base_url="http://example.invalid",api_key="test",model="model",workload=contract,request_fn=request).samples[0]
+    assert r.results["contract_passed"] is True
+
+
+@pytest.mark.parametrize("cases", [[], [ChatBenchmarkCase(name="bad",prompt="anything",checks=[])]])
+def test_invalid_workload_is_rejected_before_sending_requests(cases):
+    def request(*args):
+        pytest.fail("invalid contracts must not call a provider")
+    with pytest.raises(ValueError):
+        run_chat_benchmark(base_url="http://example.invalid",api_key="test",model="model",
+                           workload=ChatBenchmarkWorkload(workload="invalid",system_prompt="test",cases=cases),request_fn=request)
+
+
+def test_runner_does_not_claim_to_execute_an_unimplemented_evaluator():
+    contract=EvaluationWorkload(workload_id="test",role_ids=["reviewer"],dataset_revision="test-v1",
+                                evaluator="human_review",cases=[{"case_id":"one","prompt":"review"}])
+    def request(*args):
+        pytest.fail("unsupported evaluator must not send a request")
+    with pytest.raises(ValueError,match="supports only"):
+        run_chat_benchmark(base_url="http://example.invalid",api_key="test",model="model",workload=contract,request_fn=request)

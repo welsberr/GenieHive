@@ -30,6 +30,12 @@ disabled in the casual example configuration. See
 [`docs/foundation_gateway_operations.md`](docs/foundation_gateway_operations.md)
 for the operator runbook.
 
+Versioned [role evaluation contracts](docs/roles-model-evaluation.md) now support
+deterministic case checks and traceable benchmark results, including dataset and
+evaluator identity, pass-rate thresholds and hard-failure overrides. The public
+catalog contains synthetic starter cases; a contract pass is not a model-quality
+certification and does not promote a route.
+
 Integration boundaries are intentional: Anthropic and other native provider
 protocols remain blocked pending an adapter decision (the example Foundation
 config does not enable Anthropic), mTLS and scoped tokens are v1.5 work, and

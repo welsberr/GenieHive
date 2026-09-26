@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from geniehive_control.evaluation import check_response, load_evaluation_catalog
+from geniehive_control.evaluation import EvaluationCase, check_response, load_evaluation_catalog
 
 
 CATALOG = Path(__file__).parents[1] / "docs/evaluation_catalog_v1.json"
@@ -27,4 +27,25 @@ def test_workload_rejects_duplicate_cases(tmp_path: Path) -> None:
     path = tmp_path / "duplicate.json"
     path.write_text(json.dumps(raw))
     with pytest.raises(ValueError, match="unique"):
+        load_evaluation_catalog(path)
+
+
+@pytest.mark.parametrize("checks", [[], [{}], [{"kind":"contains"}], [{"kind":"regex","pattern":"["}], [{"kind":"unknown"}]])
+def test_malformed_checks_cannot_silently_pass(checks) -> None:
+    with pytest.raises(ValueError):
+        EvaluationCase(case_id="case", prompt="Return JSON", checks=checks)
+    assert check_response("anything", checks)[0] is False
+
+
+@pytest.mark.parametrize("response", ["NaN", "Infinity", '{"score": NaN}'])
+def test_json_check_rejects_non_json_numeric_constants(response) -> None:
+    assert check_response(response, [{"kind":"json"}]) == (False, ["invalid_json"])
+
+
+def test_catalog_rejects_duplicate_workload_ids(tmp_path: Path) -> None:
+    raw=json.loads(CATALOG.read_text())
+    raw["workloads"].append(raw["workloads"][0])
+    path=tmp_path/"duplicate.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="workload_id.*unique"):
         load_evaluation_catalog(path)

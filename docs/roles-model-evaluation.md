@@ -7,9 +7,11 @@ general leaderboard.
 
 ## Current implementation
 
-`docs/evaluation_catalog_v1.json` is the first versioned catalog. It records
-local model profiles and executable workload contracts. The contracts are
-private evaluation inputs, not production prompts.
+`docs/evaluation_catalog_v1.json` is a public example catalog of candidate model
+profiles and synthetic workload contracts. It does not assert that those models
+are installed, licensed for a particular use, or qualified. Keep deployment-specific
+paths, exact weight hashes, private replay cases, and raw responses in a separate
+private catalog; do not commit those records as public examples.
 
 The `geniehive_control.evaluation` module provides model-profile and workload
 contracts, dataset revisions, risk classes, minimum pass rates, hard-failure
@@ -18,6 +20,27 @@ required text, and regular-expression matches.
 
 The chat benchmark runner now records case-level results inside each benchmark
 sample. Existing aggregate fields remain for routing compatibility.
+
+Pass an `EvaluationWorkload` from a loaded catalog directly to
+`run_chat_benchmark`. The report retains its role IDs, dataset revision,
+evaluator, risk class, threshold, hard-failure codes and `contract_passed` result.
+The runner executes only `geniehive_control.evaluation.check_response`; it rejects
+other evaluator names instead of mislabeling a deterministic run as judge review.
+Declared hard-failure codes produced by these checks override the pass-rate
+threshold. `contract_passed` is a deterministic contract result, not a model
+qualification or a routing promotion. Semantic hard failures that require human
+or judge review are outside these checks.
+
+Nonempty responses that fail a JSON, substring or regex check count as failed
+cases, not as empty responses. For compatibility, the chat runner falls back to
+`reasoning_content` when normal content is empty; a passing nonempty check is
+therefore not proof that an end-user final answer was delivered. The public
+example JSON checks verify syntax and text presence, not JSON-schema conformance,
+factual accuracy or correct tool execution.
+
+Run the offline regression suite with `python -m pytest -q` after installing
+`.[dev]` in a virtual environment. It uses synthetic responses and temporary
+registries; no model server, GPU, provider key or live routing change is required.
 
 ## Role catalog
 
@@ -37,7 +60,7 @@ sample. Existing aggregate fields remain for routing compatibility.
 
 ## Model pools
 
-The local pool currently includes Qwen3.5-9B, Qwen3-8B, Qwen2.5-14B,
+The proposed comparison pool includes Qwen3.5-9B, Qwen3-8B, Qwen2.5-14B,
 Qwen2.5-Coder-14B/32B, Devstral Small 2, DeepSeek-R1-Distill-Qwen-32B,
 Tongyi DeepResearch, Mixtral, Nail, Dagger, and Jina Embeddings v4.
 
@@ -51,11 +74,14 @@ context, GPU-layer/offload configuration, and prompt/template settings.
 
 ## Dataset design
 
-Each role starts with 30 cases: 20 representative, 5 adversarial, and 5
+The planned full suite starts each role with 30 cases: 20 representative, 5 adversarial, and 5
 boundary/failure cases. Cases are versioned and classified as deterministic
 contract cases, human- or judge-reviewed quality cases, redacted replay cases
 from archive/bibliography/evidence/translation/repository work, or privacy-
 reviewed production shadow cases.
+
+The checked-in starter catalog currently contains two workloads with two cases
+each; the larger suite described here remains a roadmap.
 
 High-risk roles must have hard failures for fabricated citations, missing
 evidence spans, unsafe tool actions, invalid output contracts, and silent loss
@@ -120,6 +146,7 @@ changes, and expire stale results without deleting history.
 
 ## Promotion boundary
 
-Catalogs, prompts, raw responses, and unreviewed benchmark cases remain
-private/draft. Only reviewed aggregate benchmark records may influence routing;
+Deployment catalogs, private prompts, raw responses, and unreviewed benchmark
+cases remain private/draft; the checked-in synthetic examples are public.
+Only reviewed aggregate benchmark records may influence routing;
 no benchmark command should silently alter production role preferences.
