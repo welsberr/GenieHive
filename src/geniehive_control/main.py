@@ -457,6 +457,30 @@ def create_app(
                 headers={"X-Request-Id": request_id},
             )
 
+    @app.post("/v1/responses")
+    async def responses(request: Request, _=Depends(require_client_auth)):
+        from .responses import to_chat, from_chat, events
+        try:
+            body = await request.json()
+            chat_body, mapping = to_chat(body)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            return JSONResponse(status_code=400, content={"error": {"type": "invalid_request_error", "message": str(exc)}})
+        # Reuse the existing authenticated, authorized, budgeted and audited path.
+        translated = Request(request.scope, request.receive)
+        translated._json = chat_body
+        upstream_response = await chat_completions(translated)
+        if upstream_response.status_code >= 400:
+            return upstream_response
+        try:
+            result = from_chat(json.loads(upstream_response.body), body['model'], mapping)
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            return JSONResponse(status_code=502, content={"error": {"type": "upstream_protocol_error", "message": str(exc)}})
+        headers = {"X-Request-Id": upstream_response.headers['X-Request-Id']}
+        if body.get('stream'):
+            headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+            return StreamingResponse(events(result), media_type='text/event-stream', headers=headers)
+        return JSONResponse(content=result, headers=headers)
+
     @app.post("/v1/embeddings")
     async def embeddings(request: Request, _=Depends(require_client_auth)):
         body = await request.json()
